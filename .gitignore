@@ -1,0 +1,30 @@
+# Python Virtual Environment
+venv/
+env/
+.venv/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Secrets and Local Environment Configuration
+.env
+!.env.example
+
+# Local SQLite & Vector Databases
+data/
+*.db
+*.sqlite3
+
+# Logs
+*.log
+uvicorn.log
+
+# Pre-downloaded weights (auto-downloaded by sentence-transformers or setup)
+models/
+
+# Operating System & IDE files
+.DS_Store
+.idea/
+.vscode/
