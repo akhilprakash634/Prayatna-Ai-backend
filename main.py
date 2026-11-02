@@ -160,3 +160,8 @@ def health_check():
         "service": "Prayatna AI Assistant",
         "rag_chunks": rag_service.get_stats().get("total_chunks", 0)
     }
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
