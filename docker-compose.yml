@@ -1,0 +1,25 @@
+version: "3.8"
+
+services:
+  backend:
+    build: .
+    container_name: prayatna-ai-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.8-flash}
+      - DATABASE_URL=sqlite:///./data/prayatna.db
+      - CHROMA_PATH=./data/chroma
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-change-this-password}
+    volumes:
+      # Persist SQLite database and ChromaDB vectors outside container
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+*.pyc
+.env
+data/
+*.log
+uvicorn.log
+.git
+.gitignore
