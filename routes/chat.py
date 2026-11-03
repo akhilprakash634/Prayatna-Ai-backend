@@ -37,6 +37,8 @@ def handle_chat(payload: ChatRequest, db: Session = Depends(get_db)):
     )
     history_dicts = [{"role": m.role, "content": m.content} for m in past_messages]
 
+    language = (payload.language or "English").strip()
+
     # 3. Retrieve relevant knowledge chunks from ChromaDB
     retrieved_chunks = rag_service.query(message_text, top_k=5)
     
@@ -44,7 +46,8 @@ def handle_chat(payload: ChatRequest, db: Session = Depends(get_db)):
     ai_response_text, intent, requires_followup = gemini_service.generate_chat_response(
         user_message=message_text,
         retrieved_chunks=retrieved_chunks,
-        conversation_history=history_dicts
+        conversation_history=history_dicts,
+        language=language
     )
 
     # Update conversation category if not already specialized
@@ -122,5 +125,6 @@ def handle_chat(payload: ChatRequest, db: Session = Depends(get_db)):
         sources=sources_list,
         intent=intent,
         requires_followup=requires_followup,
-        enquiry_captured=enquiry_data
+        enquiry_captured=enquiry_data,
+        language=language
     )

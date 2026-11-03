@@ -11,6 +11,7 @@ class SourceCitation(BaseModel):
 class ChatRequest(BaseModel):
     conversation_id: Optional[str] = None
     message: str = Field(..., min_length=1, max_length=2000)
+    language: Optional[str] = Field("English", description="Preferred response language")
 
 class ChatResponse(BaseModel):
     conversation_id: str
@@ -19,6 +20,7 @@ class ChatResponse(BaseModel):
     intent: str = "general"
     requires_followup: bool = False
     enquiry_captured: Optional[Dict[str, Any]] = None
+    language: str = "English"
 
 # Message Schema
 class MessageResponse(BaseModel):

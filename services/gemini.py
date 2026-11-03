@@ -80,10 +80,11 @@ class GeminiService:
         self,
         user_message: str,
         retrieved_chunks: List[Dict[str, Any]],
-        conversation_history: List[Dict[str, str]]
+        conversation_history: List[Dict[str, str]],
+        language: str = "English"
     ) -> Tuple[str, str, bool]:
         """
-        Generate response using Gemini API or friendly fallback.
+        Generate response using Gemini API or friendly fallback in user's preferred language.
         Returns: (assistant_message, intent, requires_followup)
         """
         intent = detect_intent(user_message)
@@ -115,31 +116,41 @@ class GeminiService:
                     f"{top_source.get('content', '')[:350]}...\n\n"
                     f"Would you like to book an appointment or speak with our clinical coordinator? "
                     f"Please share your name, phone number, and email, and our team will get in touch with you right away.\n\n"
-                    f"*(Note: Gemini live generation is in offline standby. To enable full AI answers, configure `GEMINI_API_KEY` in `backend/.env`.)*"
+                    f"*(Note: Preferred response language selected: {language}. Live multilingual generation requires active `GEMINI_API_KEY`.)*"
                 )
             else:
                 fallback_msg = (
-                    "Hello! Welcome to Prayatna Centre for Child Development. "
+                    f"Hello! Welcome to Prayatna Centre for Child Development.\n\n"
                     "I would be glad to help connect you with our clinical team or guide you through our developmental programs.\n\n"
                     "If you would like to schedule an appointment or have a question about our services, "
                     "please share your name, phone number, and interested service so our coordinators can reach out to you.\n\n"
-                    "*(Note: To enable live Gemini AI generation, please set `GEMINI_API_KEY` in your `backend/.env` file.)*"
+                    f"*(Note: Preferred response language selected: {language}. Live multilingual generation requires active `GEMINI_API_KEY`.)*"
                 )
             return fallback_msg, intent, requires_followup
 
-        # Build prompt for Gemini
+        # Build prompt for Gemini with explicit language enforcement
         history_formatted = []
         for msg in conversation_history[-8:]:  # Keep recent context
             role = "Customer" if msg.get("role") == "user" else "Assistant"
             history_formatted.append(f"{role}: {msg.get('content', '')}")
         history_str = "\n".join(history_formatted)
 
+        language_instruction = (
+            f"MANDATORY RESPONSE LANGUAGE: {language.upper()}\n"
+            f"- The parent/user has explicitly chosen '{language}' as their preferred response language.\n"
+            f"- You MUST compose your ENTIRE response in {language}.\n"
+            f"- Use natural, fluent, and respectful {language} phrasing suitable for concerned parents.\n"
+            f"- For clinical terms (e.g., Speech Therapy, Occupational Therapy, ADHD, Sensory Integration), "
+            f"you may mention the standard English term in parentheses alongside the {language} term for clarity.\n"
+        )
+
         full_prompt = (
             f"SYSTEM INSTRUCTIONS:\n{self.system_prompt}\n\n"
+            f"{language_instruction}\n"
             f"ORGANIZATIONAL KNOWLEDGE RETRIEVED:\n{context_text}\n\n"
             f"RECENT CONVERSATION HISTORY:\n{history_str}\n\n"
             f"CURRENT CUSTOMER MESSAGE:\n{user_message}\n\n"
-            f"Please respond as Prayatna Assistant following all healthcare safety, personality, and enquiry collection guidelines:"
+            f"Please respond as Prayatna Assistant entirely in {language} following all healthcare safety, personality, and enquiry collection guidelines:"
         )
 
         try:
