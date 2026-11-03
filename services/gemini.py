@@ -76,6 +76,18 @@ class GeminiService:
         else:
             self._client = None
 
+    def _get_generation_config(self):
+        try:
+            from google.genai import types
+            return types.GenerateContentConfig(
+                max_output_tokens=350,
+                temperature=0.3,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to create GenerateContentConfig: {e}")
+            return None
+
     def generate_chat_response(
         self,
         user_message: str,
@@ -108,56 +120,59 @@ class GeminiService:
         if not self._client:
             logger.warning("Gemini client is unconfigured or unavailable. Providing graceful fallback response.")
             if retrieved_chunks:
-                # Provide a direct, factual summary from the indexed knowledge
                 top_source = retrieved_chunks[0]
                 fallback_msg = (
-                    f"Hello! Prayatna Centre for Child Development offers specialized support in this area.\n\n"
-                    f"Here is information from our knowledge base:\n"
-                    f"{top_source.get('content', '')[:350]}...\n\n"
-                    f"Would you like to book an appointment or speak with our clinical coordinator? "
-                    f"Please share your name, phone number, and email, and our team will get in touch with you right away.\n\n"
-                    f"*(Note: Preferred response language selected: {language}. Live multilingual generation requires active `GEMINI_API_KEY`.)*"
+                    f"Hello! Prayatna offers specialized pediatric developmental support.\n\n"
+                    f"{top_source.get('content', '')[:250]}...\n\n"
+                    f"Would you like to schedule an assessment or speak with our coordinator? "
+                    f"Please share your Name and Phone Number, and our team will get in touch directly."
                 )
             else:
                 fallback_msg = (
                     f"Hello! Welcome to Prayatna Centre for Child Development.\n\n"
-                    "I would be glad to help connect you with our clinical team or guide you through our developmental programs.\n\n"
-                    "If you would like to schedule an appointment or have a question about our services, "
-                    "please share your name, phone number, and interested service so our coordinators can reach out to you.\n\n"
-                    f"*(Note: Preferred response language selected: {language}. Live multilingual generation requires active `GEMINI_API_KEY`.)*"
+                    "We provide personalized developmental support for children. "
+                    "If you would like to book an appointment or learn more, please share your Name and Phone Number."
                 )
             return fallback_msg, intent, requires_followup
 
-        # Build prompt for Gemini with explicit language enforcement
+        # Build prompt for Gemini with explicit language enforcement and brevity
         history_formatted = []
-        for msg in conversation_history[-8:]:  # Keep recent context
+        for msg in conversation_history[-6:]:  # Keep recent context compact
             role = "Customer" if msg.get("role") == "user" else "Assistant"
             history_formatted.append(f"{role}: {msg.get('content', '')}")
         history_str = "\n".join(history_formatted)
 
         language_instruction = (
             f"MANDATORY RESPONSE LANGUAGE: {language.upper()}\n"
-            f"- The parent/user has explicitly chosen '{language}' as their preferred response language.\n"
-            f"- You MUST compose your ENTIRE response in {language}.\n"
+            f"- Compose your ENTIRE response in {language}.\n"
             f"- Use natural, fluent, and respectful {language} phrasing suitable for concerned parents.\n"
-            f"- For clinical terms (e.g., Speech Therapy, Occupational Therapy, ADHD, Sensory Integration), "
-            f"you may mention the standard English term in parentheses alongside the {language} term for clarity.\n"
+        )
+
+        brevity_instruction = (
+            "CRITICAL LENGTH CONSTRAINT (STRICT):\n"
+            "- Keep your response extremely brief: 2 to 4 sentences maximum (approx 45 to 80 words total).\n"
+            "- Do NOT repeat greeting intros like 'Hello! I am the virtual support assistant for Prayatna...'.\n"
+            "- Answer the parent's immediate question directly and concisely.\n"
+            "- End with ONE brief call to action or question if needed.\n"
         )
 
         full_prompt = (
             f"SYSTEM INSTRUCTIONS:\n{self.system_prompt}\n\n"
+            f"{brevity_instruction}\n"
             f"{language_instruction}\n"
             f"ORGANIZATIONAL KNOWLEDGE RETRIEVED:\n{context_text}\n\n"
             f"RECENT CONVERSATION HISTORY:\n{history_str}\n\n"
             f"CURRENT CUSTOMER MESSAGE:\n{user_message}\n\n"
-            f"Please respond as Prayatna Assistant entirely in {language} following all healthcare safety, personality, and enquiry collection guidelines:"
+            f"Please respond concisely (under 80 words) entirely in {language}:"
         )
 
         try:
-            response = self._client.models.generate_content(
-                model=self.model_name,
-                contents=full_prompt,
-            )
+            config = self._get_generation_config()
+            kwargs = {"model": self.model_name, "contents": full_prompt}
+            if config:
+                kwargs["config"] = config
+
+            response = self._client.models.generate_content(**kwargs)
             response_text = response.text.strip() if response.text else ""
             if not response_text:
                 raise ValueError("Empty response received from Gemini.")
@@ -165,8 +180,8 @@ class GeminiService:
         except Exception as e:
             logger.error(f"Error calling Gemini API: {e}")
             error_fallback = (
-                "Thank you for reaching out to Prayatna. We encountered a temporary issue connecting to our AI service, "
-                "but your conversation is preserved. Would you like to leave your name and phone number so our team can follow up with you directly?"
+                "Thank you for reaching out to Prayatna. We encountered a temporary issue connecting to our AI service. "
+                "Would you like to leave your name and phone number so our team can follow up directly?"
             )
             return error_fallback, intent, True
 
@@ -214,27 +229,35 @@ class GeminiService:
 
         language_instruction = (
             f"MANDATORY RESPONSE LANGUAGE: {language.upper()}\n"
-            f"- The parent/user has explicitly chosen '{language}' as their preferred response language.\n"
-            f"- You MUST compose your ENTIRE response in {language}.\n"
+            f"- Compose your ENTIRE response in {language}.\n"
             f"- Use natural, fluent, and respectful {language} phrasing suitable for concerned parents.\n"
-            f"- For clinical terms (e.g., Speech Therapy, Occupational Therapy, ADHD, Sensory Integration), "
-            f"you may mention the standard English term in parentheses alongside the {language} term for clarity.\n"
+        )
+
+        brevity_instruction = (
+            "CRITICAL LENGTH CONSTRAINT (STRICT):\n"
+            "- Keep your response extremely brief: 2 to 4 sentences maximum (approx 45 to 80 words total).\n"
+            "- Do NOT repeat greeting intros like 'Hello! I am the virtual support assistant for Prayatna...'.\n"
+            "- Answer the parent's immediate question directly and concisely.\n"
+            "- End with ONE brief call to action or question if needed.\n"
         )
 
         full_prompt = (
             f"SYSTEM INSTRUCTIONS:\n{self.system_prompt}\n\n"
+            f"{brevity_instruction}\n"
             f"{language_instruction}\n"
             f"ORGANIZATIONAL KNOWLEDGE RETRIEVED:\n{context_text}\n\n"
             f"RECENT CONVERSATION HISTORY:\n{history_str}\n\n"
             f"CURRENT CUSTOMER MESSAGE:\n{user_message}\n\n"
-            f"Please respond as Prayatna Assistant entirely in {language} following all healthcare safety, personality, and enquiry collection guidelines:"
+            f"Please respond concisely (under 80 words) entirely in {language}:"
         )
 
         try:
-            stream = self._client.models.generate_content_stream(
-                model=self.model_name,
-                contents=full_prompt,
-            )
+            config = self._get_generation_config()
+            kwargs = {"model": self.model_name, "contents": full_prompt}
+            if config:
+                kwargs["config"] = config
+
+            stream = self._client.models.generate_content_stream(**kwargs)
             for chunk in stream:
                 if chunk.text:
                     yield chunk.text
