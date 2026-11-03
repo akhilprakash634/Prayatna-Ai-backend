@@ -71,6 +71,154 @@ def extract_lead_info(
         "parent_name": parent_name
     }
 
+def generate_suggested_queries(intent: str, language: str = "English") -> List[str]:
+    """Generate 2-3 relevant follow-up question chips based on conversation intent and language."""
+    lang = (language or "English").lower()
+    
+    # Malayalam
+    if "malayalam" in lang:
+        if intent == "appointment_enquiry":
+            return [
+                "സെന്റർ ലൊക്കേഷനുകളും സമയവും എപ്പോഴാണ്?",
+                "അസസ്സ്മെന്റിന് എന്തൊക്കെ വിവരങ്ങൾ വേണം?",
+                "ഓൺലൈൻ കൺസൾട്ടേഷൻ ലഭ്യമാണോ?"
+            ]
+        elif intent == "payment_support":
+            return [
+                "പണം കുറഞ്ഞതിന്റെ സ്റ്റാറ്റസ് പരിശോധിക്കൂ",
+                "അക്കൗണ്ട്സ് ടീമുമായി സംസാരിക്കണം",
+                "ഫീസ് റസീറ്റ് എങ്ങനെ ലഭിക്കും?"
+            ]
+        elif intent == "service_enquiry":
+            return [
+                "ഒരു അസസ്സ്മെന്റ് എങ്ങനെ ബുക്ക് ചെയ്യാം?",
+                "തെറാപ്പി ഫീസ് വിവരങ്ങൾ അറിയാമോ?",
+                "മാതാപിതാക്കൾക്ക് സെഷനിൽ ഇരിക്കാമോ?"
+            ]
+        else:
+            return [
+                "പ്രയത്നയിലെ പ്രധാന സേവനങ്ങൾ എന്തൊക്കെയാണ്?",
+                "അസസ്സ്മെന്റ് എങ്ങനെ ബുക്ക് ചെയ്യാം?",
+                "ഏത് പ്രായത്തിലുള്ള കുട്ടികൾക്കാണ് സഹായം?"
+            ]
+            
+    # Hindi
+    elif "hindi" in lang:
+        if intent == "appointment_enquiry":
+            return [
+                "सेंटर का पता और समय क्या है?",
+                "असेसमेंट के लिए क्या जानकारी चाहिए?",
+                "क्या ऑनलाइन कंसल्टेशन मिल सकता है?"
+            ]
+        elif intent == "payment_support":
+            return [
+                "कटे हुए पेमेंट का स्टेटस बताएं",
+                "अकाउंट्स टीम से बात करनी है",
+                "पेमेंट रसीद कैसे प्राप्त करें?"
+            ]
+        elif intent == "service_enquiry":
+            return [
+                "असेसमेंट कैसे बुक करें?",
+                "थेरेपी सेशन की फीस कितनी है?",
+                "क्या माता-पिता सेशन में रह सकते हैं?"
+            ]
+        else:
+            return [
+                "प्रयत्न में कौन-सी थेरेपी उपलब्ध हैं?",
+                "असेसमेंट कैसे बुक करें?",
+                "किस उम्र के बच्चों के लिए थेरेपी है?"
+            ]
+            
+    # Tamil
+    elif "tamil" in lang:
+        if intent == "appointment_enquiry":
+            return [
+                "மையத்தின் முகவரி மற்றும் நேரம் என்ன?",
+                "மதிப்பீட்டிற்கு என்ன கொண்டு வர வேண்டும்?",
+                "ஆன்லைன் ஆலோசனை கிடைக்குமா?"
+            ]
+        elif intent == "payment_support":
+            return [
+                "கட்டண நிலையை சரிபார்க்கவும்",
+                "கணக்கு குழுவுடன் பேசவும்",
+                "ரசீது எவ்வாறு பெறுவது?"
+            ]
+        else:
+            return [
+                "மதிப்பீட்டை எவ்வாறு பதிவு செய்வது?",
+                "சிகிச்சை கட்டணங்கள் எவ்வளவு?",
+                "என்னென்ன சிகிச்சைகள் வழங்கப்படுகின்றன?"
+            ]
+            
+    # Kannada
+    elif "kannada" in lang:
+        if intent == "appointment_enquiry":
+            return [
+                "ಕೇಂದ್ರದ ಸ್ಥಳ ಮತ್ತು ಸಮಯಗಳು ಯಾವುವು?",
+                "ಮೌಲ್ಯಮಾಪನಕ್ಕೆ ಏನು ತರಬೇಕು?",
+                "ಆನ್‌ಲೈನ್ ಸಮಾಲೋಚನೆ ಲಭ್ಯವಿದೆಯೇ?"
+            ]
+        elif intent == "payment_support":
+            return [
+                "ಪಾವತಿ ಸ್ಥಿತಿ ಪರಿಶೀಲಿಸಿ",
+                "ಖಾತೆಗಳ ತಂಡದೊಂದಿಗೆ ಮಾತನಾಡಿ",
+                "ರಶೀದಿ ಪಡೆಯುವುದು ಹೇಗೆ?"
+            ]
+        else:
+            return [
+                "ಮೌಲ್ಯಮಾಪನವನ್ನು ಹೇಗೆ ಬುಕ್ ಮಾಡುವುದು?",
+                "ಥೆರಪಿ ಶುಲ್ಕಗಳು ಎಷ್ಟು?",
+                "ಯಾವ ಚಿಕಿತ್ಸೆಗಳು ಲಭ್ಯವಿವೆ?"
+            ]
+            
+    # Telugu
+    elif "telugu" in lang:
+        if intent == "appointment_enquiry":
+            return [
+                "సెంటర్ లొకేషన్ మరియు సమయాలు ఏమిటి?",
+                "అసెస్మెంట్‌కు ఏమి తీసుకురావాలి?",
+                "ఆన్‌లైన్ కన్సల్టేషన్ అందుబాటులో ఉందా?"
+            ]
+        elif intent == "payment_support":
+            return [
+                "చెల్లింపు స్థితిని తనిఖీ చేయండి",
+                "అకౌంట్స్ బృందంతో మాట్లాడాలి",
+                "రసీదు ఎలా పొందాలి?"
+            ]
+        else:
+            return [
+                "అసెస్మెంట్‌ను ఎలా బుక్ చేయాలి?",
+                "థెరపీ ఫీజుల వివరాలు ఏమిటి?",
+                "ఏ థెరపీలు అందుబాటులో ఉన్నాయి?"
+            ]
+            
+    # Default: English
+    else:
+        if intent == "appointment_enquiry":
+            return [
+                "What are your center locations & timings?",
+                "What should I bring for assessment?",
+                "Can we book an online consultation?"
+            ]
+        elif intent == "payment_support":
+            return [
+                "Check deducted payment status",
+                "Connect with accounts coordinator",
+                "What payment methods are supported?"
+            ]
+        elif intent == "service_enquiry":
+            return [
+                "How to schedule an assessment?",
+                "What are the therapy session charges?",
+                "Can parents attend therapy sessions?"
+            ]
+        else:
+            return [
+                "What therapies does Prayatna offer?",
+                "How to book an assessment?",
+                "What age groups do you support?"
+            ]
+
 class GeminiService:
     def __init__(self):
         self.api_key = os.getenv("GEMINI_API_KEY", "").strip()

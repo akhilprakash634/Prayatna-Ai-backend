@@ -21,6 +21,7 @@ class ChatResponse(BaseModel):
     requires_followup: bool = False
     enquiry_captured: Optional[Dict[str, Any]] = None
     language: str = "English"
+    suggested_queries: List[str] = Field(default_factory=list)
 
 # Message Schema
 class MessageResponse(BaseModel):

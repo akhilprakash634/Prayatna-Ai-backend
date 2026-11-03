@@ -7,7 +7,7 @@ from database import get_db, SessionLocal
 from models import Conversation, Message, Enquiry
 from schemas import ChatRequest, ChatResponse, SourceCitation
 from services.rag import rag_service
-from services.gemini import gemini_service, extract_lead_info, detect_intent
+from services.gemini import gemini_service, extract_lead_info, detect_intent, generate_suggested_queries
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -120,6 +120,8 @@ def handle_chat(payload: ChatRequest, db: Session = Depends(get_db)):
 
     db.commit()
 
+    suggested_queries = generate_suggested_queries(intent, language)
+
     return ChatResponse(
         conversation_id=conversation.id,
         message=ai_response_text,
@@ -127,7 +129,8 @@ def handle_chat(payload: ChatRequest, db: Session = Depends(get_db)):
         intent=intent,
         requires_followup=requires_followup,
         enquiry_captured=enquiry_data,
-        language=language
+        language=language,
+        suggested_queries=suggested_queries
     )
 
 
@@ -279,6 +282,8 @@ def handle_chat_stream(payload: ChatRequest):
 
             stream_db.commit()
 
+            suggested_queries = generate_suggested_queries(intent, language)
+
             # Emit final done event
             done_payload = json.dumps({
                 "type": "done",
@@ -287,7 +292,8 @@ def handle_chat_stream(payload: ChatRequest):
                 "intent": intent,
                 "requires_followup": requires_followup,
                 "enquiry_captured": enquiry_data,
-                "language": language
+                "language": language,
+                "suggested_queries": suggested_queries
             })
             yield f"data: {done_payload}\n\n"
 
