@@ -119,6 +119,23 @@ def seed_initial_knowledge():
 async def lifespan(app: FastAPI):
     # Startup actions
     seed_initial_knowledge()
+    
+    # Pre-warm embedding model to eliminate first-request cold start
+    try:
+        from services.embeddings import embedding_service
+        embedding_service.embed_query("Prayatna Centre child development")
+        logger.info("Embedding service pre-warmed successfully.")
+    except Exception as e:
+        logger.warning(f"Embedding warmup warning: {e}")
+
+    # Pre-warm Gemini client
+    try:
+        from services.gemini import gemini_service
+        gemini_service._init_client()
+        logger.info("Gemini service initialized at startup.")
+    except Exception as e:
+        logger.warning(f"Gemini client warmup warning: {e}")
+
     yield
     # Shutdown actions
 

@@ -1,12 +1,13 @@
 import json
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from database import get_db
+from database import get_db, SessionLocal
 from models import Conversation, Message, Enquiry
 from schemas import ChatRequest, ChatResponse, SourceCitation
 from services.rag import rag_service
-from services.gemini import gemini_service, extract_lead_info
+from services.gemini import gemini_service, extract_lead_info, detect_intent
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -128,3 +129,167 @@ def handle_chat(payload: ChatRequest, db: Session = Depends(get_db)):
         enquiry_captured=enquiry_data,
         language=language
     )
+
+
+@router.post("/stream")
+def handle_chat_stream(payload: ChatRequest):
+    """
+    Streams the assistant response token-by-token using Server-Sent Events (SSE).
+    Significantly reduces perceived latency (Time to First Token < 500ms).
+    """
+    message_text = payload.message.strip()
+    if not message_text:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message cannot be empty.")
+
+    # 1. Retrieve or create conversation with an isolated session
+    db = SessionLocal()
+    try:
+        conversation = None
+        if payload.conversation_id:
+            conversation = db.query(Conversation).filter(Conversation.id == payload.conversation_id).first()
+
+        if not conversation:
+            conversation = Conversation()
+            db.add(conversation)
+            db.commit()
+            db.refresh(conversation)
+
+        # 2. Retrieve recent conversation history
+        past_messages = (
+            db.query(Message)
+            .filter(Message.conversation_id == conversation.id)
+            .order_by(Message.created_at.asc())
+            .all()
+        )
+        history_dicts = [{"role": m.role, "content": m.content} for m in past_messages]
+
+        language = (payload.language or "English").strip()
+
+        # 3. Fast RAG retrieval (top 3 for low latency)
+        retrieved_chunks = rag_service.query(message_text, top_k=3)
+        intent = detect_intent(message_text)
+        requires_followup = (intent in ("appointment_enquiry", "payment_support"))
+
+        # Extract sources
+        seen_urls = set()
+        sources_list = []
+        for chunk in retrieved_chunks:
+            url = chunk.get("url") or "https://prayatna.co.in/"
+            title = chunk.get("title") or "Prayatna Resource"
+            if url not in seen_urls:
+                seen_urls.add(url)
+                sources_list.append({"title": title, "url": url})
+
+        # Save user message immediately
+        user_msg = Message(
+            conversation_id=conversation.id,
+            role="user",
+            content=message_text
+        )
+        db.add(user_msg)
+        db.commit()
+
+        conv_id = conversation.id
+    finally:
+        db.close()
+
+    def stream_generator():
+        assembled_chunks = []
+        stream_db = SessionLocal()
+        try:
+            # Emit init event immediately
+            init_payload = json.dumps({
+                "type": "init",
+                "conversation_id": conv_id,
+                "sources": sources_list,
+                "intent": intent,
+                "requires_followup": requires_followup,
+                "language": language
+            })
+            yield f"data: {init_payload}\n\n"
+
+            # Stream chunks from Gemini
+            for token in gemini_service.generate_chat_response_stream(
+                user_message=message_text,
+                retrieved_chunks=retrieved_chunks,
+                conversation_history=history_dicts,
+                language=language
+            ):
+                assembled_chunks.append(token)
+                chunk_payload = json.dumps({
+                    "type": "chunk",
+                    "text": token
+                })
+                yield f"data: {chunk_payload}\n\n"
+
+            full_text = "".join(assembled_chunks)
+
+            # Check lead / enquiry extraction
+            enquiry_data = None
+            captured_info = extract_lead_info(full_text, user_message=message_text)
+            if captured_info.get("phone") and captured_info.get("parent_name"):
+                new_enquiry = Enquiry(
+                    conversation_id=conv_id,
+                    parent_name=captured_info["parent_name"],
+                    phone=captured_info["phone"],
+                    email=captured_info.get("email") or "Not provided",
+                    child_age=captured_info.get("child_age"),
+                    interested_service=captured_info.get("interested_service") or "General Consultation",
+                    category="appointment" if intent == "appointment_enquiry" else "general",
+                    description=f"Enquiry from streaming chat: '{message_text[:200]}'",
+                    preferred_contact="phone"
+                )
+                stream_db.add(new_enquiry)
+                stream_db.commit()
+                stream_db.refresh(new_enquiry)
+                enquiry_data = {
+                    "id": new_enquiry.id,
+                    "parent_name": new_enquiry.parent_name,
+                    "phone": new_enquiry.phone,
+                    "email": new_enquiry.email,
+                    "category": new_enquiry.category,
+                    "status": new_enquiry.status
+                }
+
+            # Save assistant message to DB
+            assistant_msg = Message(
+                conversation_id=conv_id,
+                role="assistant",
+                content=full_text,
+                sources_json=json.dumps(sources_list)
+            )
+            stream_db.add(assistant_msg)
+            stream_db.commit()
+
+            # Emit final done event
+            done_payload = json.dumps({
+                "type": "done",
+                "conversation_id": conv_id,
+                "sources": sources_list,
+                "intent": intent,
+                "requires_followup": requires_followup,
+                "enquiry_captured": enquiry_data,
+                "language": language
+            })
+            yield f"data: {done_payload}\n\n"
+
+        except Exception as err:
+            logger.error(f"Error in stream_generator: {err}")
+            err_payload = json.dumps({
+                "type": "error",
+                "message": str(err)
+            })
+            yield f"data: {err_payload}\n\n"
+        finally:
+            stream_db.close()
+
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
+

@@ -170,4 +170,76 @@ class GeminiService:
             )
             return error_fallback, intent, True
 
+    def generate_chat_response_stream(
+        self,
+        user_message: str,
+        retrieved_chunks: List[Dict[str, Any]],
+        conversation_history: List[Dict[str, str]],
+        language: str = "English"
+    ):
+        """
+        Stream response tokens from Gemini in real time.
+        Yields text chunks as they arrive.
+        """
+        if not self._client and os.getenv("GEMINI_API_KEY"):
+            self._init_client()
+
+        # Format retrieved context
+        context_blocks = []
+        for idx, chunk in enumerate(retrieved_chunks):
+            title = chunk.get("title", f"Document Chunk {idx+1}")
+            url = chunk.get("url", "")
+            content = chunk.get("content", "")
+            context_blocks.append(f"--- SOURCE [{idx+1}]: {title} ({url}) ---\n{content}\n")
+        context_text = "\n".join(context_blocks) if context_blocks else "No specific documents found in knowledge base."
+
+        if not self._client:
+            # Fallback streamer
+            fallback_text, _, _ = self.generate_chat_response(
+                user_message=user_message,
+                retrieved_chunks=retrieved_chunks,
+                conversation_history=conversation_history,
+                language=language
+            )
+            words = fallback_text.split(" ")
+            for w in words:
+                yield w + " "
+            return
+
+        history_formatted = []
+        for msg in conversation_history[-6:]:
+            role = "Customer" if msg.get("role") == "user" else "Assistant"
+            history_formatted.append(f"{role}: {msg.get('content', '')}")
+        history_str = "\n".join(history_formatted)
+
+        language_instruction = (
+            f"MANDATORY RESPONSE LANGUAGE: {language.upper()}\n"
+            f"- The parent/user has explicitly chosen '{language}' as their preferred response language.\n"
+            f"- You MUST compose your ENTIRE response in {language}.\n"
+            f"- Use natural, fluent, and respectful {language} phrasing suitable for concerned parents.\n"
+            f"- For clinical terms (e.g., Speech Therapy, Occupational Therapy, ADHD, Sensory Integration), "
+            f"you may mention the standard English term in parentheses alongside the {language} term for clarity.\n"
+        )
+
+        full_prompt = (
+            f"SYSTEM INSTRUCTIONS:\n{self.system_prompt}\n\n"
+            f"{language_instruction}\n"
+            f"ORGANIZATIONAL KNOWLEDGE RETRIEVED:\n{context_text}\n\n"
+            f"RECENT CONVERSATION HISTORY:\n{history_str}\n\n"
+            f"CURRENT CUSTOMER MESSAGE:\n{user_message}\n\n"
+            f"Please respond as Prayatna Assistant entirely in {language} following all healthcare safety, personality, and enquiry collection guidelines:"
+        )
+
+        try:
+            stream = self._client.models.generate_content_stream(
+                model=self.model_name,
+                contents=full_prompt,
+            )
+            for chunk in stream:
+                if chunk.text:
+                    yield chunk.text
+        except Exception as e:
+            logger.error(f"Error streaming from Gemini: {e}")
+            yield "Thank you for reaching out to Prayatna. We encountered a temporary connection issue. Would you like to leave your name and phone number so our team can follow up with you directly?"
+
 gemini_service = GeminiService()
