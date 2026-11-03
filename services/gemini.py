@@ -31,9 +31,22 @@ def detect_intent(message: str) -> str:
         return "service_enquiry"
     return "general"
 
-def extract_lead_info(message: str, history: List[Dict[str, str]]) -> Dict[str, Optional[str]]:
+def extract_lead_info(
+    message: str,
+    history: Optional[List[Dict[str, str]]] = None,
+    user_message: Optional[str] = None,
+    **kwargs
+) -> Dict[str, Optional[str]]:
     """Simple heuristic extractor to detect contact information shared by parent."""
-    text_corpus = " ".join([h.get("content", "") for h in history] + [message])
+    all_texts = []
+    if history:
+        all_texts.extend([h.get("content", "") for h in history if isinstance(h, dict)])
+    if message:
+        all_texts.append(message)
+    if user_message:
+        all_texts.append(user_message)
+    
+    text_corpus = " ".join(all_texts)
     
     # Phone extraction (10+ digits or formatted phone)
     phone_match = re.search(r"(\+?\d{1,3}[-.\s]?)?\(?\d{3,4}\)?[-.\s]?\d{3}[-.\s]?\d{3,4}", text_corpus)
@@ -47,10 +60,15 @@ def extract_lead_info(message: str, history: List[Dict[str, str]]) -> Dict[str, 
     age_match = re.search(r"(\d{1,2})\s*(?:year|yr|month|mth)s?\s*(?:old)?", text_corpus, re.IGNORECASE)
     child_age = age_match.group(0).strip() if age_match else None
 
+    # Name extraction heuristic (e.g. "Name: John", "My name is John")
+    name_match = re.search(r"(?:name\s*[:\-]?\s*|my name is\s+|i am\s+|this is\s+)([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)", text_corpus, re.IGNORECASE)
+    parent_name = name_match.group(1).strip() if name_match else None
+
     return {
         "phone": phone,
         "email": email,
-        "child_age": child_age
+        "child_age": child_age,
+        "parent_name": parent_name
     }
 
 class GeminiService:

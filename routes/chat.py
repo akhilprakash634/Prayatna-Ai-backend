@@ -224,32 +224,39 @@ def handle_chat_stream(payload: ChatRequest):
 
             full_text = "".join(assembled_chunks)
 
-            # Check lead / enquiry extraction
+            # Check lead / enquiry extraction safely
             enquiry_data = None
-            captured_info = extract_lead_info(full_text, user_message=message_text)
-            if captured_info.get("phone") and captured_info.get("parent_name"):
-                new_enquiry = Enquiry(
-                    conversation_id=conv_id,
-                    parent_name=captured_info["parent_name"],
-                    phone=captured_info["phone"],
-                    email=captured_info.get("email") or "Not provided",
-                    child_age=captured_info.get("child_age"),
-                    interested_service=captured_info.get("interested_service") or "General Consultation",
-                    category="appointment" if intent == "appointment_enquiry" else "general",
-                    description=f"Enquiry from streaming chat: '{message_text[:200]}'",
-                    preferred_contact="phone"
-                )
-                stream_db.add(new_enquiry)
-                stream_db.commit()
-                stream_db.refresh(new_enquiry)
-                enquiry_data = {
-                    "id": new_enquiry.id,
-                    "parent_name": new_enquiry.parent_name,
-                    "phone": new_enquiry.phone,
-                    "email": new_enquiry.email,
-                    "category": new_enquiry.category,
-                    "status": new_enquiry.status
-                }
+            try:
+                captured_info = extract_lead_info(message=message_text, history=history_dicts)
+                if captured_info.get("phone") or captured_info.get("email"):
+                    existing_enquiry = stream_db.query(Enquiry).filter(Enquiry.conversation_id == conv_id).first()
+                    if not existing_enquiry:
+                        cat = "payment_support" if intent == "payment_support" else "appointment"
+                        new_enquiry = Enquiry(
+                            conversation_id=conv_id,
+                            parent_name=captured_info.get("parent_name") or "Website Visitor",
+                            phone=captured_info.get("phone") or "Not provided",
+                            email=captured_info.get("email") or "Not provided",
+                            child_age=captured_info.get("child_age"),
+                            interested_service="General Consultation",
+                            category=cat,
+                            description=f"Enquiry from streaming chat: '{message_text[:200]}'",
+                            preferred_contact="phone" if captured_info.get("phone") else "email",
+                            status="New"
+                        )
+                        stream_db.add(new_enquiry)
+                        stream_db.commit()
+                        stream_db.refresh(new_enquiry)
+                        enquiry_data = {
+                            "id": new_enquiry.id,
+                            "parent_name": new_enquiry.parent_name,
+                            "phone": new_enquiry.phone,
+                            "email": new_enquiry.email,
+                            "category": new_enquiry.category,
+                            "status": new_enquiry.status
+                        }
+            except Exception as e_lead:
+                logger.warning(f"Error extracting lead info in stream: {e_lead}")
 
             # Save assistant message to DB
             assistant_msg = Message(
@@ -259,6 +266,17 @@ def handle_chat_stream(payload: ChatRequest):
                 sources_json=json.dumps(sources_list)
             )
             stream_db.add(assistant_msg)
+
+            # Update conversation timestamp and category
+            conv_record = stream_db.query(Conversation).filter(Conversation.id == conv_id).first()
+            if conv_record:
+                from models import utc_now
+                conv_record.updated_at = utc_now()
+                if conv_record.category in ("general", None) and intent != "general":
+                    conv_record.category = intent
+                if enquiry_data:
+                    conv_record.status = "lead_captured"
+
             stream_db.commit()
 
             # Emit final done event
