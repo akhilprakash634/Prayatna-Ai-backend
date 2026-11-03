@@ -31,6 +31,24 @@ def detect_intent(message: str) -> str:
         return "service_enquiry"
     return "general"
 
+SERVICES_MAP = [
+    (r"speech(\s+and\s+language)?(\s+therapy)?", "Speech Therapy"),
+    (r"occupational(\s+therapy)?|sensory(\s+integration)?", "Occupational Therapy"),
+    (r"aba(\s+therapy)?|behavio(u)?r(al)?(\s+therapy)?", "Behavioral & ABA Therapy"),
+    (r"autism|asd", "Autism Spectrum Support"),
+    (r"adhd", "ADHD Support"),
+    (r"physio(therapy)?|motor\s+skills", "Physiotherapy"),
+    (r"special\s+education|learning\s+disability", "Special Education"),
+    (r"assess(ment)?|screening|evaluation", "Developmental Assessment"),
+]
+
+def detect_service(corpus: str) -> Optional[str]:
+    c = corpus.lower()
+    for pattern, service_name in SERVICES_MAP:
+        if re.search(pattern, c):
+            return service_name
+    return None
+
 def extract_lead_info(
     message: str,
     history: Optional[List[Dict[str, str]]] = None,
@@ -47,28 +65,74 @@ def extract_lead_info(
         all_texts.append(user_message)
     
     text_corpus = " ".join(all_texts)
-    
-    # Phone extraction (10+ digits or formatted phone)
+    msg_only = (message or user_message or "").strip()
+
+    # 1. Phone extraction (10+ digits or formatted phone)
     phone_match = re.search(r"(\+?\d{1,3}[-.\s]?)?\(?\d{3,4}\)?[-.\s]?\d{3}[-.\s]?\d{3,4}", text_corpus)
     phone = phone_match.group(0).strip() if phone_match and len(re.sub(r"\D", "", phone_match.group(0))) >= 10 else None
 
-    # Email extraction
+    # 2. Email extraction
     email_match = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", text_corpus)
     email = email_match.group(0).strip() if email_match else None
 
-    # Child age
-    age_match = re.search(r"(\d{1,2})\s*(?:year|yr|month|mth)s?\s*(?:old)?", text_corpus, re.IGNORECASE)
-    child_age = age_match.group(0).strip() if age_match else None
+    # 3. Child age extraction
+    child_age = None
+    # Pattern A: e.g. "12 years", "4 yrs", "18 months"
+    age_match = re.search(r"(\d{1,2})\s*(?:years?|yrs?|months?|mths?)\s*(?:old)?", text_corpus, re.IGNORECASE)
+    if age_match:
+        child_age = age_match.group(0).strip()
+    
+    # Pattern B: e.g. "age: 12", "age 12", "age - 5"
+    if not child_age:
+        age_label_match = re.search(r"(?:age|child\s*age)\s*[:=\-]?\s*(\d{1,2})", text_corpus, re.IGNORECASE)
+        if age_label_match:
+            child_age = f"{age_label_match.group(1)} years"
 
-    # Name extraction heuristic (e.g. "Name: John", "My name is John")
-    name_match = re.search(r"(?:name\s*[:\-]?\s*|my name is\s+|i am\s+|this is\s+)([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)", text_corpus, re.IGNORECASE)
-    parent_name = name_match.group(1).strip() if name_match else None
+    # 4. Parent Name extraction
+    parent_name = None
+    # Pattern A: e.g. "Name: Akhil", "My name is Akhil", "I am Akhil"
+    name_match = re.search(r"(?:name\s*[:\-]?\s*|my name is\s+|i am\s+|this is\s+)([A-Za-z]+(?:\s+[A-Za-z]+)?)", msg_only, re.IGNORECASE)
+    if name_match:
+        parent_name = name_match.group(1).strip()
+
+    # 5. Comma / Delimiter parsing for direct replies (e.g. "Akhil, 7902819158, 12")
+    tokens = [t.strip() for t in re.split(r"[,;\n|/]", msg_only) if t.strip()]
+    cleaned_tokens = []
+    for t in tokens:
+        # If token is phone, skip
+        if phone and re.sub(r"\D", "", t) == re.sub(r"\D", "", phone):
+            continue
+        # If token is email, skip
+        if email and t.lower() == email.lower():
+            continue
+        cleaned_tokens.append(t)
+
+    for t in cleaned_tokens:
+        # Check if token is just age number (e.g. '12' or '4')
+        if not child_age and re.fullmatch(r"\d{1,2}", t):
+            val = int(t)
+            if 1 <= val <= 20:
+                child_age = f"{val} years"
+                continue
+
+        # Check if token is person's name (1 to 3 words, pure alphabetic)
+        if not parent_name and re.fullmatch(r"[A-Za-z\s]{2,30}", t):
+            t_low = t.lower()
+            if t_low not in [
+                "yes", "no", "hi", "hello", "appointment", "assessment", 
+                "speech therapy", "therapy", "general", "okay", "ok", "please", "thanks"
+            ]:
+                parent_name = t.title()
+
+    # 6. Service extraction across message and past conversation history
+    interested_service = detect_service(text_corpus)
 
     return {
         "phone": phone,
         "email": email,
         "child_age": child_age,
-        "parent_name": parent_name
+        "parent_name": parent_name,
+        "interested_service": interested_service
     }
 
 def generate_suggested_queries(intent: str, language: str = "English") -> List[str]:

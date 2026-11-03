@@ -76,37 +76,61 @@ def handle_chat(payload: ChatRequest, db: Session = Depends(get_db)):
 
     # 7. Check for conversational lead capture
     enquiry_data = None
-    lead_info = extract_lead_info(message_text, history_dicts)
-    if lead_info["phone"] or lead_info["email"]:
-        # If the user shared phone/email, we can register or link an enquiry
+    lead_info = extract_lead_info(message=message_text, history=history_dicts)
+    if lead_info.get("phone") or lead_info.get("email"):
         existing_enquiry = db.query(Enquiry).filter(Enquiry.conversation_id == conversation.id).first()
+        service_name = lead_info.get("interested_service")
+        if not service_name or service_name == "General Consultation":
+            if conversation.category and conversation.category not in ("general", None):
+                service_name = conversation.category.replace("_", " ").title()
+            else:
+                service_name = "Comprehensive Developmental Assessment"
+
+        cat = "payment_support" if intent == "payment_support" else "appointment"
+
         if not existing_enquiry:
-            # Create preliminary enquiry record
-            cat = "payment_support" if intent == "payment_support" else "appointment"
             enquiry = Enquiry(
                 conversation_id=conversation.id,
                 parent_name=lead_info.get("parent_name") or "Website Visitor",
                 email=lead_info.get("email") or "Not provided",
                 phone=lead_info.get("phone") or "Not provided",
                 child_age=lead_info.get("child_age"),
-                interested_service=conversation.category.replace("_", " ").title(),
+                interested_service=service_name,
                 category=cat,
-                description=f"Enquiry initiated via chat: '{message_text[:200]}'",
+                description=f"Enquiry from chat: '{message_text[:200]}'",
                 preferred_contact="phone" if lead_info.get("phone") else "email",
                 status="New"
             )
             db.add(enquiry)
             db.commit()
             db.refresh(enquiry)
-            enquiry_data = {
-                "id": enquiry.id,
-                "parent_name": enquiry.parent_name,
-                "phone": enquiry.phone,
-                "email": enquiry.email,
-                "category": enquiry.category,
-                "status": enquiry.status
-            }
+            existing_enquiry = enquiry
             conversation.status = "lead_captured"
+        else:
+            if lead_info.get("parent_name") and existing_enquiry.parent_name in ("Website Visitor", "Parent / Visitor", ""):
+                existing_enquiry.parent_name = lead_info["parent_name"]
+            if lead_info.get("child_age") and not existing_enquiry.child_age:
+                existing_enquiry.child_age = lead_info["child_age"]
+            if service_name and existing_enquiry.interested_service in ("General Consultation", "Comprehensive Developmental Assessment", ""):
+                existing_enquiry.interested_service = service_name
+            if lead_info.get("phone") and existing_enquiry.phone in ("Not provided", ""):
+                existing_enquiry.phone = lead_info["phone"]
+            if lead_info.get("email") and existing_enquiry.email in ("Not provided", ""):
+                existing_enquiry.email = lead_info["email"]
+            existing_enquiry.description = f"{existing_enquiry.description}\nFollow-up: '{message_text[:200]}'"
+            db.commit()
+            db.refresh(existing_enquiry)
+
+        enquiry_data = {
+            "id": existing_enquiry.id,
+            "parent_name": existing_enquiry.parent_name,
+            "phone": existing_enquiry.phone,
+            "email": existing_enquiry.email,
+            "child_age": existing_enquiry.child_age,
+            "interested_service": existing_enquiry.interested_service,
+            "category": existing_enquiry.category,
+            "status": existing_enquiry.status
+        }
 
     # 8. Save AI response to DB
     sources_json_str = json.dumps([s.model_dump() for s in sources_list])
@@ -233,15 +257,24 @@ def handle_chat_stream(payload: ChatRequest):
                 captured_info = extract_lead_info(message=message_text, history=history_dicts)
                 if captured_info.get("phone") or captured_info.get("email"):
                     existing_enquiry = stream_db.query(Enquiry).filter(Enquiry.conversation_id == conv_id).first()
+                    service_name = captured_info.get("interested_service")
+                    if not service_name or service_name == "General Consultation":
+                        conv_record = stream_db.query(Conversation).filter(Conversation.id == conv_id).first()
+                        if conv_record and conv_record.category and conv_record.category not in ("general", None):
+                            service_name = conv_record.category.replace("_", " ").title()
+                        else:
+                            service_name = "Comprehensive Developmental Assessment"
+
+                    cat = "payment_support" if intent == "payment_support" else "appointment"
+
                     if not existing_enquiry:
-                        cat = "payment_support" if intent == "payment_support" else "appointment"
                         new_enquiry = Enquiry(
                             conversation_id=conv_id,
                             parent_name=captured_info.get("parent_name") or "Website Visitor",
                             phone=captured_info.get("phone") or "Not provided",
                             email=captured_info.get("email") or "Not provided",
                             child_age=captured_info.get("child_age"),
-                            interested_service="General Consultation",
+                            interested_service=service_name,
                             category=cat,
                             description=f"Enquiry from streaming chat: '{message_text[:200]}'",
                             preferred_contact="phone" if captured_info.get("phone") else "email",
@@ -250,14 +283,32 @@ def handle_chat_stream(payload: ChatRequest):
                         stream_db.add(new_enquiry)
                         stream_db.commit()
                         stream_db.refresh(new_enquiry)
-                        enquiry_data = {
-                            "id": new_enquiry.id,
-                            "parent_name": new_enquiry.parent_name,
-                            "phone": new_enquiry.phone,
-                            "email": new_enquiry.email,
-                            "category": new_enquiry.category,
-                            "status": new_enquiry.status
-                        }
+                        existing_enquiry = new_enquiry
+                    else:
+                        if captured_info.get("parent_name") and existing_enquiry.parent_name in ("Website Visitor", "Parent / Visitor", ""):
+                            existing_enquiry.parent_name = captured_info["parent_name"]
+                        if captured_info.get("child_age") and not existing_enquiry.child_age:
+                            existing_enquiry.child_age = captured_info["child_age"]
+                        if service_name and existing_enquiry.interested_service in ("General Consultation", "Comprehensive Developmental Assessment", ""):
+                            existing_enquiry.interested_service = service_name
+                        if captured_info.get("phone") and existing_enquiry.phone in ("Not provided", ""):
+                            existing_enquiry.phone = captured_info["phone"]
+                        if captured_info.get("email") and existing_enquiry.email in ("Not provided", ""):
+                            existing_enquiry.email = captured_info["email"]
+                        existing_enquiry.description = f"{existing_enquiry.description}\nFollow-up: '{message_text[:200]}'"
+                        stream_db.commit()
+                        stream_db.refresh(existing_enquiry)
+
+                    enquiry_data = {
+                        "id": existing_enquiry.id,
+                        "parent_name": existing_enquiry.parent_name,
+                        "phone": existing_enquiry.phone,
+                        "email": existing_enquiry.email,
+                        "child_age": existing_enquiry.child_age,
+                        "interested_service": existing_enquiry.interested_service,
+                        "category": existing_enquiry.category,
+                        "status": existing_enquiry.status
+                    }
             except Exception as e_lead:
                 logger.warning(f"Error extracting lead info in stream: {e_lead}")
 
