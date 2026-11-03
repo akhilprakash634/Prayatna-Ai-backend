@@ -12,7 +12,9 @@ services:
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.8-flash}
       - DATABASE_URL=sqlite:///./data/prayatna.db
       - CHROMA_PATH=./data/chroma
-      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      - FRONTEND_URL=${FRONTEND_URL:-*}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
+      - CORS_ORIGIN_REGEX=${CORS_ORIGIN_REGEX:-}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-change-this-password}
     volumes:

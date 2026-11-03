@@ -129,22 +129,40 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS configuration
-frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-allowed_origins = [
-    frontend_url,
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:3001"
-]
+# CORS configuration - dynamically configured via environment variables
+cors_origins_env = os.getenv("ALLOWED_ORIGINS") or os.getenv("FRONTEND_URL", "*")
+cors_regex_env = os.getenv("CORS_ORIGIN_REGEX")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-)
+if cors_regex_env:
+    # Custom regex from .env (e.g. to match any subdomain: ^https?://([a-zA-Z0-9-]+\.)*yourdomain\.com(:[0-9]+)?$)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=cors_regex_env,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+elif cors_origins_env.strip() == "*":
+    # Allow all origins via regex while supporting credentials and custom headers
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"^https?://.*",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    # Specific comma-separated origins specified in .env
+    allowed_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+
 
 # Attach API routers
 app.include_router(chat.router)
