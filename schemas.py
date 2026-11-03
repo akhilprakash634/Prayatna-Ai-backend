@@ -1,6 +1,13 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
+
+def _serialize_utc(dt: Optional[datetime]) -> Optional[str]:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
 
 # Source metadata schema
 class SourceCitation(BaseModel):
@@ -32,6 +39,10 @@ class MessageResponse(BaseModel):
     sources_json: Optional[str] = None
     created_at: datetime
 
+    @field_serializer("created_at")
+    def serialize_created_at(self, v: datetime):
+        return _serialize_utc(v)
+
     class Config:
         from_attributes = True
 
@@ -45,6 +56,10 @@ class ConversationSummary(BaseModel):
     message_count: int = 0
     customer_name: Optional[str] = None
 
+    @field_serializer("created_at", "updated_at")
+    def serialize_dates(self, v: datetime):
+        return _serialize_utc(v)
+
     class Config:
         from_attributes = True
 
@@ -55,6 +70,10 @@ class ConversationDetail(BaseModel):
     status: str
     category: str
     messages: List[MessageResponse] = []
+
+    @field_serializer("created_at", "updated_at")
+    def serialize_dates(self, v: datetime):
+        return _serialize_utc(v)
 
     class Config:
         from_attributes = True
@@ -90,6 +109,10 @@ class EnquiryResponse(BaseModel):
     status: str
     created_at: datetime
 
+    @field_serializer("created_at")
+    def serialize_created_at(self, v: datetime):
+        return _serialize_utc(v)
+
     class Config:
         from_attributes = True
 
@@ -105,6 +128,10 @@ class KnowledgeDocumentResponse(BaseModel):
     chunk_count: int
     status: str
     created_at: datetime
+
+    @field_serializer("created_at")
+    def serialize_created_at(self, v: datetime):
+        return _serialize_utc(v)
 
     class Config:
         from_attributes = True
@@ -137,3 +164,7 @@ class ActivityItem(BaseModel):
     subtitle: str
     timestamp: datetime
     status: Optional[str] = None
+
+    @field_serializer("timestamp")
+    def serialize_timestamp(self, v: datetime):
+        return _serialize_utc(v)
