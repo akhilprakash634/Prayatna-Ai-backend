@@ -31,6 +31,20 @@ jobs:
             docker compose down
             docker compose up -d --build
 
-            # Wait briefly and verify health
-            sleep 10
-            curl -f http://localhost:8000/health || (docker compose logs --tail=50 && exit 1)
+            # Wait for backend container to become healthy (up to 60s)
+            echo "Waiting for Prayatna AI backend to start..."
+            TIMEOUT=60
+            ELAPSED=0
+            until curl -s -f http://localhost:8000/health > /dev/null; do
+              if [ $ELAPSED -ge $TIMEOUT ]; then
+                echo "Health check timed out after ${TIMEOUT}s! Showing logs:"
+                docker compose logs --tail=100
+                exit 1
+              fi
+              echo "Waiting for service to be ready... (${ELAPSED}s/${TIMEOUT}s)"
+              sleep 3
+              ELAPSED=$((ELAPSED + 3))
+            done
+
+            echo "Backend is healthy and running!"
+            curl -s http://localhost:8000/health
