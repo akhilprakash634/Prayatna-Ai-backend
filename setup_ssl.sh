@@ -8,6 +8,11 @@ set -e
 DOMAIN="${1:-prayatna.demoapi.thescalecraft.in}"
 EMAIL="${2:-akhilprakash634@gmail.com}"
 
+# Sanitize inputs (in case of duplicate paste)
+DOMAIN=$(echo "$DOMAIN" | awk '{print $1}' | sed 's/[^a-zA-Z0-9.-]//g')
+EMAIL=$(echo "$EMAIL" | awk '{print $1}' | grep -o '[a-zA-Z0-9._%+-]\+@[a-zA-Z0-9.-]\+\.[a-zA-Z]\{2,\}' | head -n1 || echo "akhilprakash634@gmail.com")
+if [ -z "$EMAIL" ]; then EMAIL="akhilprakash634@gmail.com"; fi
+
 echo "=========================================================="
 echo "   Setting up SSL & Nginx for: $DOMAIN"
 echo "   Contact Email:              $EMAIL"
@@ -17,6 +22,7 @@ echo "=========================================================="
 echo ">>> [1/5] Installing Nginx and Certbot..."
 sudo apt-get update
 sudo apt-get install -y nginx certbot python3-certbot-nginx
+sudo systemctl daemon-reload
 
 # 2. Allow HTTP/HTTPS traffic through UFW firewall
 echo ">>> [2/5] Configuring firewall rules (Ports 80 & 443)..."
@@ -27,6 +33,17 @@ sudo ufw allow 'Nginx Full' || true
 # 3. Create Nginx reverse proxy configuration
 echo ">>> [3/5] Creating Nginx configuration for $DOMAIN..."
 NGINX_CONF="/etc/nginx/sites-available/prayatna-ai"
+
+# Clean up any conflicting old configs
+sudo rm -f /etc/nginx/sites-enabled/default
+for conf in /etc/nginx/sites-enabled/*; do
+    if [ -f "$conf" ] && [ "$conf" != "/etc/nginx/sites-enabled/prayatna-ai" ]; then
+        if grep -q "$DOMAIN" "$conf" 2>/dev/null; then
+            echo "Removing conflicting config: $conf"
+            sudo rm -f "$conf"
+        fi
+    fi
+done
 
 sudo bash -c "cat > $NGINX_CONF" <<EOF
 server {
@@ -56,18 +73,21 @@ server {
 }
 EOF
 
-# Enable configuration and remove default
+# Enable configuration
 sudo ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/prayatna-ai
-sudo rm -f /etc/nginx/sites-enabled/default
 
 # Test Nginx syntax and reload
 echo "Testing Nginx configuration syntax..."
 sudo nginx -t
-sudo systemctl reload nginx
+sudo systemctl restart nginx
 sudo systemctl enable nginx
 
 # 4. Request SSL Certificate via Certbot
-echo ">>> [4/5] Requesting Let's Encrypt SSL Certificate..."
+echo ">>> [4/5] Clearing stale Certbot locks and requesting SSL Certificate..."
+# Kill any background or hanging certbot instances
+sudo pkill -9 -f certbot || true
+sudo rm -f /var/lib/letsencrypt/.certbot.lock /var/log/letsencrypt/.certbot.lock /etc/letsencrypt/.certbot.lock
+
 sudo certbot --nginx \
     -d "$DOMAIN" \
     --non-interactive \
@@ -84,3 +104,4 @@ echo "   SSL & Reverse Proxy Setup Complete!"
 echo "   HTTPS URL: https://$DOMAIN"
 echo "   Health:    https://$DOMAIN/health"
 echo "=========================================================="
+
