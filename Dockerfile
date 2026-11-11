@@ -12,8 +12,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install CPU-only PyTorch first (~180MB vs ~3.5GB+ NVIDIA CUDA wheels on CPU servers)
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch
+# Upgrade pip (python:3.10-slim ships pip 23.0.1 which rejects PEP 503 underscore/case wheels) and install CPU-only PyTorch (~180MB vs ~3.5GB+ CUDA)
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch
 
 # Install remaining python dependencies
 COPY requirements.txt .
