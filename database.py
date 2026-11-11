@@ -3,8 +3,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 from dotenv import load_dotenv
 
-# Load environment configuration, overriding any ambient shell variables
-load_dotenv(override=True)
+# Load .env without clobbering explicit process/container/test environment variables
+load_dotenv(override=False)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")

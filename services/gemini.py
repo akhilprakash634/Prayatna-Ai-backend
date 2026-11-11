@@ -135,9 +135,15 @@ def extract_lead_info(
         "interested_service": interested_service
     }
 
-def generate_suggested_queries(intent: str, language: str = "English") -> List[str]:
-    """Generate 2-3 relevant follow-up question chips based on conversation intent and language."""
+def generate_suggested_queries(
+    intent: str,
+    language: str = "English",
+    organization_name: Optional[str] = None,
+) -> List[str]:
+    """Generate 2-3 relevant follow-up question chips based on conversation intent, language, and org."""
     lang = (language or "English").lower()
+    is_prayatna = not organization_name or "prayatna" in organization_name.lower()
+    org_label = organization_name or "Prayatna"
     
     # Malayalam
     if "malayalam" in lang:
@@ -161,9 +167,9 @@ def generate_suggested_queries(intent: str, language: str = "English") -> List[s
             ]
         else:
             return [
-                "പ്രയത്നയിലെ പ്രധാന സേവനങ്ങൾ എന്തൊക്കെയാണ്?",
+                "പ്രയത്നയിലെ പ്രധാന സേവനങ്ങൾ എന്തൊക്കെയാണ്?" if is_prayatna else f"{org_label} നൽകുന്ന പ്രധാന സേവനങ്ങൾ എന്തൊക്കെയാണ്?",
                 "അസസ്സ്മെന്റ് എങ്ങനെ ബുക്ക് ചെയ്യാം?",
-                "ഏത് പ്രായത്തിലുള്ള കുട്ടികൾക്കാണ് സഹായം?"
+                "ഏത് പ്രായത്തിലുള്ള കുട്ടികൾക്കാണ് സഹായം?" if is_prayatna else "സേവന സമയങ്ങൾ എപ്പോഴാണ്?"
             ]
             
     # Hindi
@@ -188,9 +194,9 @@ def generate_suggested_queries(intent: str, language: str = "English") -> List[s
             ]
         else:
             return [
-                "प्रयत्न में कौन-सी थेरेपी उपलब्ध हैं?",
+                "प्रयत्न में कौन-सी थेरेपी उपलब्ध हैं?" if is_prayatna else f"{org_label} में कौन-सी सेवाएं उपलब्ध हैं?",
                 "असेसमेंट कैसे बुक करें?",
-                "किस उम्र के बच्चों के लिए थेरेपी है?"
+                "किस उम्र के बच्चों के लिए थेरेपी है?" if is_prayatna else "संपर्क और समय की जानकारी क्या है?"
             ]
             
     # Tamil
@@ -277,10 +283,16 @@ def generate_suggested_queries(intent: str, language: str = "English") -> List[s
                 "Can parents attend therapy sessions?"
             ]
         else:
+            if is_prayatna:
+                return [
+                    "What therapies does Prayatna offer?",
+                    "How to book an assessment?",
+                    "What age groups do you support?"
+                ]
             return [
-                "What therapies does Prayatna offer?",
-                "How to book an assessment?",
-                "What age groups do you support?"
+                f"What services does {org_label} offer?",
+                "How do I book an appointment?",
+                "What are your timings and contact details?"
             ]
 
 class GeminiService:
@@ -318,12 +330,87 @@ class GeminiService:
             logger.warning(f"Failed to create GenerateContentConfig: {e}")
             return None
 
+    def _build_full_prompt(
+        self,
+        user_message: str,
+        retrieved_chunks: List[Dict[str, Any]],
+        conversation_history: List[Dict[str, str]],
+        language: str = "English",
+        organization_name: Optional[str] = None,
+        organization_slug: Optional[str] = None,
+        assistant_name: Optional[str] = None,
+        custom_instructions: Optional[str] = None,
+    ) -> Tuple[str, str]:
+        """Build full prompt & fallback context string scoped strictly to the tenant organization."""
+        context_blocks = []
+        for idx, chunk in enumerate(retrieved_chunks):
+            title = chunk.get("title", f"Document Chunk {idx + 1}")
+            url = chunk.get("url", "")
+            content = chunk.get("content", "")
+            context_blocks.append(f"--- SOURCE [{idx + 1}]: {title} ({url}) ---\n{content}\n")
+
+        context_text = "\n".join(context_blocks) if context_blocks else "No specific documents found in knowledge base."
+
+        history_formatted = []
+        for msg in conversation_history[-6:]:
+            role = "Customer" if msg.get("role") == "user" else "Assistant"
+            history_formatted.append(f"{role}: {msg.get('content', '')}")
+        history_str = "\n".join(history_formatted)
+
+        is_prayatna = (organization_slug == "prayatna") or (
+            not organization_name and not organization_slug
+        )
+        org_label = organization_name or "Prayatna Centre for Child Development"
+        ai_label = assistant_name or "Virtual Support Assistant"
+
+        if is_prayatna:
+            base_instructions = self.system_prompt
+        else:
+            base_instructions = (
+                f"You are {ai_label}, the virtual support assistant for {org_label}.\n"
+                f"Your role is to assist visitors and customers with concise, accurate, and polite answers using ONLY {org_label}'s knowledge base below.\n"
+                f"Never mention any other organization or external clinic. Never diagnose medical conditions or request OTPs/CVVs/passwords.\n"
+                f"If the customer wants to schedule an appointment, book a service, or request a callback, ask briefly in ONE sentence for their Name, Phone Number, and requirement."
+            )
+
+        if custom_instructions and custom_instructions.strip():
+            base_instructions = f"{base_instructions}\n\nORGANIZATION SPECIFIC INSTRUCTIONS:\n{custom_instructions.strip()}"
+
+        language_instruction = (
+            f"MANDATORY RESPONSE LANGUAGE: {language.upper()}\n"
+            f"- Compose your ENTIRE response in {language}.\n"
+            f"- Use natural, fluent, and respectful {language} phrasing.\n"
+        )
+
+        brevity_instruction = (
+            "CRITICAL LENGTH CONSTRAINT (STRICT):\n"
+            "- Keep your response extremely brief: 2 to 4 sentences maximum (approx 45 to 80 words total).\n"
+            "- Do NOT repeat greeting intros on every turn.\n"
+            "- Answer the visitor's immediate question directly and concisely based strictly on the retrieved knowledge.\n"
+            "- End with ONE brief call to action or question if needed.\n"
+        )
+
+        full_prompt = (
+            f"SYSTEM INSTRUCTIONS:\n{base_instructions}\n\n"
+            f"{brevity_instruction}\n"
+            f"{language_instruction}\n"
+            f"ORGANIZATIONAL KNOWLEDGE RETRIEVED ({org_label}):\n{context_text}\n\n"
+            f"RECENT CONVERSATION HISTORY:\n{history_str}\n\n"
+            f"CURRENT CUSTOMER MESSAGE:\n{user_message}\n\n"
+            f"Please respond concisely (under 80 words) entirely in {language}:"
+        )
+        return full_prompt, org_label
+
     def generate_chat_response(
         self,
         user_message: str,
         retrieved_chunks: List[Dict[str, Any]],
         conversation_history: List[Dict[str, str]],
-        language: str = "English"
+        language: str = "English",
+        organization_name: Optional[str] = None,
+        organization_slug: Optional[str] = None,
+        assistant_name: Optional[str] = None,
+        custom_instructions: Optional[str] = None,
     ) -> Tuple[str, str, bool]:
         """
         Generate response using Gemini API or friendly fallback in user's preferred language.
@@ -332,69 +419,37 @@ class GeminiService:
         intent = detect_intent(user_message)
         requires_followup = (intent in ("appointment_enquiry", "payment_support"))
 
-        # Re-check client if key was added dynamically
         if not self._client and os.getenv("GEMINI_API_KEY"):
             self._init_client()
 
-        # Format retrieved context
-        context_blocks = []
-        for idx, chunk in enumerate(retrieved_chunks):
-            title = chunk.get("title", f"Document Chunk {idx+1}")
-            url = chunk.get("url", "")
-            content = chunk.get("content", "")
-            context_blocks.append(f"--- SOURCE [{idx+1}]: {title} ({url}) ---\n{content}\n")
-        
-        context_text = "\n".join(context_blocks) if context_blocks else "No specific documents found in knowledge base."
+        full_prompt, org_label = self._build_full_prompt(
+            user_message=user_message,
+            retrieved_chunks=retrieved_chunks,
+            conversation_history=conversation_history,
+            language=language,
+            organization_name=organization_name,
+            organization_slug=organization_slug,
+            assistant_name=assistant_name,
+            custom_instructions=custom_instructions,
+        )
 
-        # If Gemini client is unavailable, provide transparent, friendly guidance based on retrieved context
         if not self._client:
             logger.warning("Gemini client is unconfigured or unavailable. Providing graceful fallback response.")
             if retrieved_chunks:
                 top_source = retrieved_chunks[0]
                 fallback_msg = (
-                    f"Hello! Prayatna offers specialized pediatric developmental support.\n\n"
+                    f"Hello! Here is what we found from {org_label}:\n\n"
                     f"{top_source.get('content', '')[:250]}...\n\n"
-                    f"Would you like to schedule an assessment or speak with our coordinator? "
+                    f"Would you like to book an appointment or speak with our coordinator? "
                     f"Please share your Name and Phone Number, and our team will get in touch directly."
                 )
             else:
                 fallback_msg = (
-                    f"Hello! Welcome to Prayatna Centre for Child Development.\n\n"
-                    "We provide personalized developmental support for children. "
+                    f"Hello! Welcome to {org_label}.\n\n"
+                    "We are here to assist you with information and enquiries. "
                     "If you would like to book an appointment or learn more, please share your Name and Phone Number."
                 )
             return fallback_msg, intent, requires_followup
-
-        # Build prompt for Gemini with explicit language enforcement and brevity
-        history_formatted = []
-        for msg in conversation_history[-6:]:  # Keep recent context compact
-            role = "Customer" if msg.get("role") == "user" else "Assistant"
-            history_formatted.append(f"{role}: {msg.get('content', '')}")
-        history_str = "\n".join(history_formatted)
-
-        language_instruction = (
-            f"MANDATORY RESPONSE LANGUAGE: {language.upper()}\n"
-            f"- Compose your ENTIRE response in {language}.\n"
-            f"- Use natural, fluent, and respectful {language} phrasing suitable for concerned parents.\n"
-        )
-
-        brevity_instruction = (
-            "CRITICAL LENGTH CONSTRAINT (STRICT):\n"
-            "- Keep your response extremely brief: 2 to 4 sentences maximum (approx 45 to 80 words total).\n"
-            "- Do NOT repeat greeting intros like 'Hello! I am the virtual support assistant for Prayatna...'.\n"
-            "- Answer the parent's immediate question directly and concisely.\n"
-            "- End with ONE brief call to action or question if needed.\n"
-        )
-
-        full_prompt = (
-            f"SYSTEM INSTRUCTIONS:\n{self.system_prompt}\n\n"
-            f"{brevity_instruction}\n"
-            f"{language_instruction}\n"
-            f"ORGANIZATIONAL KNOWLEDGE RETRIEVED:\n{context_text}\n\n"
-            f"RECENT CONVERSATION HISTORY:\n{history_str}\n\n"
-            f"CURRENT CUSTOMER MESSAGE:\n{user_message}\n\n"
-            f"Please respond concisely (under 80 words) entirely in {language}:"
-        )
 
         try:
             config = self._get_generation_config()
@@ -410,7 +465,7 @@ class GeminiService:
         except Exception as e:
             logger.error(f"Error calling Gemini API: {e}")
             error_fallback = (
-                "Thank you for reaching out to Prayatna. We encountered a temporary issue connecting to our AI service. "
+                f"Thank you for reaching out to {org_label}. We encountered a temporary issue connecting to our AI service. "
                 "Would you like to leave your name and phone number so our team can follow up directly?"
             )
             return error_fallback, intent, True
@@ -420,7 +475,11 @@ class GeminiService:
         user_message: str,
         retrieved_chunks: List[Dict[str, Any]],
         conversation_history: List[Dict[str, str]],
-        language: str = "English"
+        language: str = "English",
+        organization_name: Optional[str] = None,
+        organization_slug: Optional[str] = None,
+        assistant_name: Optional[str] = None,
+        custom_instructions: Optional[str] = None,
     ):
         """
         Stream response tokens from Gemini in real time.
@@ -429,57 +488,32 @@ class GeminiService:
         if not self._client and os.getenv("GEMINI_API_KEY"):
             self._init_client()
 
-        # Format retrieved context
-        context_blocks = []
-        for idx, chunk in enumerate(retrieved_chunks):
-            title = chunk.get("title", f"Document Chunk {idx+1}")
-            url = chunk.get("url", "")
-            content = chunk.get("content", "")
-            context_blocks.append(f"--- SOURCE [{idx+1}]: {title} ({url}) ---\n{content}\n")
-        context_text = "\n".join(context_blocks) if context_blocks else "No specific documents found in knowledge base."
+        full_prompt, org_label = self._build_full_prompt(
+            user_message=user_message,
+            retrieved_chunks=retrieved_chunks,
+            conversation_history=conversation_history,
+            language=language,
+            organization_name=organization_name,
+            organization_slug=organization_slug,
+            assistant_name=assistant_name,
+            custom_instructions=custom_instructions,
+        )
 
         if not self._client:
-            # Fallback streamer
             fallback_text, _, _ = self.generate_chat_response(
                 user_message=user_message,
                 retrieved_chunks=retrieved_chunks,
                 conversation_history=conversation_history,
-                language=language
+                language=language,
+                organization_name=organization_name,
+                organization_slug=organization_slug,
+                assistant_name=assistant_name,
+                custom_instructions=custom_instructions,
             )
             words = fallback_text.split(" ")
             for w in words:
                 yield w + " "
             return
-
-        history_formatted = []
-        for msg in conversation_history[-6:]:
-            role = "Customer" if msg.get("role") == "user" else "Assistant"
-            history_formatted.append(f"{role}: {msg.get('content', '')}")
-        history_str = "\n".join(history_formatted)
-
-        language_instruction = (
-            f"MANDATORY RESPONSE LANGUAGE: {language.upper()}\n"
-            f"- Compose your ENTIRE response in {language}.\n"
-            f"- Use natural, fluent, and respectful {language} phrasing suitable for concerned parents.\n"
-        )
-
-        brevity_instruction = (
-            "CRITICAL LENGTH CONSTRAINT (STRICT):\n"
-            "- Keep your response extremely brief: 2 to 4 sentences maximum (approx 45 to 80 words total).\n"
-            "- Do NOT repeat greeting intros like 'Hello! I am the virtual support assistant for Prayatna...'.\n"
-            "- Answer the parent's immediate question directly and concisely.\n"
-            "- End with ONE brief call to action or question if needed.\n"
-        )
-
-        full_prompt = (
-            f"SYSTEM INSTRUCTIONS:\n{self.system_prompt}\n\n"
-            f"{brevity_instruction}\n"
-            f"{language_instruction}\n"
-            f"ORGANIZATIONAL KNOWLEDGE RETRIEVED:\n{context_text}\n\n"
-            f"RECENT CONVERSATION HISTORY:\n{history_str}\n\n"
-            f"CURRENT CUSTOMER MESSAGE:\n{user_message}\n\n"
-            f"Please respond concisely (under 80 words) entirely in {language}:"
-        )
 
         try:
             config = self._get_generation_config()
@@ -493,6 +527,9 @@ class GeminiService:
                     yield chunk.text
         except Exception as e:
             logger.error(f"Error streaming from Gemini: {e}")
-            yield "Thank you for reaching out to Prayatna. We encountered a temporary connection issue. Would you like to leave your name and phone number so our team can follow up with you directly?"
+            yield (
+                f"Thank you for reaching out to {org_label}. We encountered a temporary connection issue. "
+                "Would you like to leave your name and phone number so our team can follow up with you directly?"
+            )
 
 gemini_service = GeminiService()
