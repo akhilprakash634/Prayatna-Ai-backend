@@ -21,14 +21,27 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           port: 22
           script: |
+            set -e
             # Navigate to the repository directory
             cd /home/ubuntu/Prayatna-Ai-backend
 
             # Pull latest changes from main branch
             git pull origin main
 
+            # Stop running container and reclaim disk space before rebuilding (host ./data bind mount is preserved)
+            docker compose down --remove-orphans || true
+            docker container prune -f || true
+            docker image prune -af || true
+            DISK_USED=$(df -P / | awk 'NR==2 {gsub("%",""); print $5}')
+            echo "Root disk usage before build: ${DISK_USED}%"
+            if [ "${DISK_USED:-0}" -ge 70 ]; then
+              echo "Disk usage >= 70%, pruning Docker build cache..."
+              docker builder prune -af || true
+            else
+              docker builder prune -f || true
+            fi
+
             # Rebuild and start container in detached mode
-            docker compose down
             docker compose up -d --build
 
             # Wait for backend container to become healthy (up to 60s)

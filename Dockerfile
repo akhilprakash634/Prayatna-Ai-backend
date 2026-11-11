@@ -12,7 +12,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install python dependencies
+# Install CPU-only PyTorch first (~180MB vs ~3.5GB+ NVIDIA CUDA wheels on CPU servers)
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch
+
+# Install remaining python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

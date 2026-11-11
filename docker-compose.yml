@@ -8,13 +8,22 @@ services:
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.8-flash}
-      - DATABASE_URL=sqlite:///./data/prayatna.db
-      - CHROMA_PATH=./data/chroma
-      - FRONTEND_URL=${FRONTEND_URL:-*}
-      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
-      - CORS_ORIGIN_REGEX=${CORS_ORIGIN_REGEX:-}
-      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-change-this-password}
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/prayatna.db}
+      - CHROMA_PATH=${CHROMA_PATH:-./data/chroma}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
+      - JWT_TTL_MINUTES=${JWT_TTL_MINUTES:-720}
+      - PUBLIC_APP_URL=${PUBLIC_APP_URL:-}
+      - COOKIE_SECURE=${COOKIE_SECURE:-}
+      - SUPER_ADMIN_EMAIL=${SUPER_ADMIN_EMAIL:-superadmin@prayatna-saas.local}
+      - SUPER_ADMIN_NAME=${SUPER_ADMIN_NAME:-Platform Super Admin}
+      - SUPER_ADMIN_PASSWORD=${SUPER_ADMIN_PASSWORD:-}
+      - PRAYATNA_ADMIN_EMAIL=${PRAYATNA_ADMIN_EMAIL:-admin@prayatna.co.in}
+      - PRAYATNA_ADMIN_NAME=${PRAYATNA_ADMIN_NAME:-Prayatna Admin}
+      - PRAYATNA_ADMIN_PASSWORD=${PRAYATNA_ADMIN_PASSWORD:-}
+      - PUBLIC_CHAT_RATE_LIMIT=${PUBLIC_CHAT_RATE_LIMIT:-30}
+      - FRONTEND_URL=${FRONTEND_URL:-}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
     volumes:
       # Persist SQLite database and ChromaDB vectors outside container
       - ./data:/app/data
