@@ -1,7 +1,10 @@
 import logging
 import os
+import re
 import uuid
+from collections import Counter
 from typing import List, Tuple
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
@@ -14,10 +17,11 @@ from schemas import (
     KnowledgeTestResponse,
     KnowledgeTestResult,
     ScrapeRequest,
+    TextKnowledgeRequest,
 )
-from services.document_processor import DocumentProcessor, sanitize_filename
+from services.document_processor import DocumentProcessor, chunk_text, sanitize_filename
 from services.rag import rag_service
-from services.scraper import WebsiteScraper, is_safe_url
+from services.scraper import SpaScrapeError, WebsiteScraper, is_safe_url
 from services.security import AuthContext, assert_org_access, require_client_admin
 from services.tenant import record_usage
 
@@ -52,6 +56,11 @@ def scrape_website(
     try:
         scraper = WebsiteScraper(max_pages=25, delay=0.3)
         pages = scraper.scrape(url)
+    except SpaScrapeError as se:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{se} You can upload a PDF/DOCX/TXT or paste text content directly instead.",
+        )
     except Exception as e:
         logger.error("Scraping failed: %s", e)
         raise HTTPException(
@@ -67,10 +76,16 @@ def scrape_website(
 
     org_slug, collection_name = _get_org_rag_target(db, ctx)
     created_docs = []
+    title_counts = Counter(page["title"] for page in pages)
 
     for page in pages:
         page_url = page["url"]
-        page_title = page["title"]
+        raw_title = page["title"]
+        page_path = urlparse(page_url).path.rstrip("/")
+        if title_counts[raw_title] > 1 and page_path:
+            page_title = f"{raw_title[:65]} ({page_path[:30]})"
+        else:
+            page_title = raw_title
         chunks = page["chunks"]
 
         existing_doc = (
@@ -87,6 +102,7 @@ def scrape_website(
                 org_slug=org_slug,
                 collection_name=collection_name,
             )
+            existing_doc.filename = page_title[:100]
             doc_id = existing_doc.id
             doc_record = existing_doc
         else:
@@ -202,6 +218,87 @@ async def upload_document(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Document processing failed.",
+        )
+
+
+@router.post("/text", response_model=KnowledgeDocumentResponse)
+def add_text_knowledge(
+    payload: TextKnowledgeRequest,
+    ctx: AuthContext = Depends(require_client_admin),
+    db: Session = Depends(get_db),
+):
+    """Index pasted raw text, FAQs, or policy notes directly into the organization's RAG store."""
+    clean_title = re.sub(r"\s+", " ", payload.title).strip()[:120]
+    cleaned_content = re.sub(r"\s+", " ", payload.content).strip()
+    if len(clean_title) < 2:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Title must be at least 2 characters.")
+    if len(cleaned_content) < 20:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please enter at least 20 characters of readable text.",
+        )
+
+    chunks = chunk_text(cleaned_content, chunk_size=450, overlap=70)
+    if not chunks:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No readable text chunks found.")
+
+    org_slug, collection_name = _get_org_rag_target(db, ctx)
+
+    existing_doc = (
+        db.query(KnowledgeDocument)
+        .filter(
+            KnowledgeDocument.organization_id == ctx.organization_id,
+            KnowledgeDocument.filename == clean_title,
+            KnowledgeDocument.source_type == "text",
+        )
+        .first()
+    )
+    if existing_doc:
+        rag_service.delete_document_chunks(
+            existing_doc.id,
+            org_slug=org_slug,
+            collection_name=collection_name,
+        )
+        doc_id = existing_doc.id
+        doc_record = existing_doc
+        doc_record.source_url = payload.source_url
+    else:
+        doc_id = str(uuid.uuid4())
+        doc_record = KnowledgeDocument(
+            id=doc_id,
+            organization_id=ctx.organization_id,
+            filename=clean_title,
+            source_type="text",
+            source_url=payload.source_url,
+            chunk_count=0,
+            status="processing",
+        )
+        db.add(doc_record)
+        db.commit()
+
+    try:
+        chunk_count = rag_service.add_document_chunks(
+            document_id=doc_id,
+            chunks=chunks,
+            source_title=clean_title,
+            source_url=payload.source_url or "Manual Entry",
+            source_type="text",
+            org_slug=org_slug,
+            collection_name=collection_name,
+        )
+        doc_record.chunk_count = chunk_count
+        doc_record.status = "indexed"
+        record_usage(db, ctx.organization_id, "document_upload", 1, {"filename": clean_title, "source": "text"})
+        db.commit()
+        db.refresh(doc_record)
+        return doc_record
+    except Exception as e:
+        logger.error("Error indexing manual text '%s': %s", clean_title, e)
+        doc_record.status = "error"
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to index pasted text content.",
         )
 
 

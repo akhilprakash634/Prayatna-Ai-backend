@@ -20,6 +20,11 @@ RUN pip install --no-cache-dir --upgrade pip \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install lightweight Chromium Headless Shell & OS libs for JS-rendered SPA scraping fallback
+RUN playwright install chromium-headless-shell \
+    && playwright install-deps chromium-headless-shell \
+    && rm -rf /var/lib/apt/lists/*
+
 # Pre-download SentenceTransformer model during build to eliminate startup network latency
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
 

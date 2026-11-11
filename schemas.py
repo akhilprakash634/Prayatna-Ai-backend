@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, Field, field_serializer, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 
@@ -121,6 +121,23 @@ class EnquiryResponse(BaseModel):
 # Knowledge Schemas
 class ScrapeRequest(BaseModel):
     url: str = Field(..., min_length=5, max_length=500)
+
+class TextKnowledgeRequest(BaseModel):
+    title: str = Field(..., min_length=2, max_length=150)
+    content: str = Field(..., min_length=20, max_length=200000)
+    source_url: Optional[str] = Field(None, max_length=500)
+
+    @field_validator("source_url")
+    @classmethod
+    def validate_source_url(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        if not cleaned:
+            return None
+        if not (cleaned.startswith("http://") or cleaned.startswith("https://")):
+            raise ValueError("Source URL must start with http:// or https://")
+        return cleaned
 
 class KnowledgeDocumentResponse(BaseModel):
     id: str

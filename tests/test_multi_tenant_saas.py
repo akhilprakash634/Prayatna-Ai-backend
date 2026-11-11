@@ -489,6 +489,100 @@ class MultiTenantSaaSAcceptanceTests(unittest.TestCase):
         ]
         self.assertIn(429, statuses)
 
+    def test_spa_scraper_ssrf_and_manual_text_knowledge(self):
+        from unittest.mock import MagicMock, patch
+        from bs4 import BeautifulSoup
+        from services.scraper import WebsiteScraper, _extract_internal_links, _looks_like_spa_shell, clean_html_content, SpaScrapeError
+
+        # 1. Nav/Footer link extraction happens before clean_html_content mutates soup
+        html_with_nav = (
+            "<html><head><title>Test Org</title></head><body>"
+            "<nav><a href='/about'>About</a><a href='https://evil.example/phish'>External</a></nav>"
+            "<main><p>" + ("Word " * 40) + "</p></main>"
+            "<footer><a href='/contact'>Contact</a></footer>"
+            "</body></html>"
+        )
+        soup = BeautifulSoup(html_with_nav, "html.parser")
+        links = _extract_internal_links(soup, "https://example.org/", "https://example.org/")
+        cleaned = clean_html_content(soup)
+        self.assertIn("https://example.org/about", links)
+        self.assertIn("https://example.org/contact", links)
+        self.assertNotIn("https://evil.example/phish", links)
+        self.assertGreater(len(cleaned), 100)
+
+        # 2. SPA detection triggers fallback & /api/knowledge/scrape surfaces 422 on SpaScrapeError
+        spa_html = "<html><head><title>AIOTA</title></head><body><noscript>You need to enable JavaScript to run this app.</noscript><div id='root'></div></body></html>"
+        self.assertTrue(_looks_like_spa_shell(spa_html, 5))
+
+        # 3. SSRF redirect protection blocks redirect to AWS metadata / loopback
+        redirect_resp = MagicMock()
+        redirect_resp.status_code = 302
+        redirect_resp.headers = {"Location": "http://169.254.169.254/latest/meta-data/"}
+        scraper = WebsiteScraper(max_pages=5, delay=0)
+        with patch("services.scraper.is_safe_url", side_effect=lambda u: "example.org" in u), \
+             patch("services.scraper.requests.get", return_value=redirect_resp):
+            safe_res = scraper._safe_get("https://example.org/", "https://example.org/")
+            self.assertIsNone(safe_res)
+
+        # 4. End-to-end /api/knowledge/text + XSS source_url validation + 422 on SPA fallback error
+        prayatna_client = self._new_client()
+        p_login = prayatna_client.post(
+            "/api/auth/login",
+            json={"email": "admin@prayatna.co.in", "password": "PrayatnaSecret#2026"},
+        )
+        self.assertEqual(p_login.status_code, 200)
+
+        bad_url_res = prayatna_client.post(
+            "/api/knowledge/text",
+            headers=_csrf_headers(prayatna_client),
+            json={
+                "title": "Unsafe Link",
+                "content": "Valid text content long enough for testing knowledge endpoints.",
+                "source_url": "javascript:alert(1)",
+            },
+        )
+        self.assertEqual(bad_url_res.status_code, 422)
+
+        ok_text_res = prayatna_client.post(
+            "/api/knowledge/text",
+            headers=_csrf_headers(prayatna_client),
+            json={
+                "title": "Clinic Holiday Schedule 2026",
+                "content": "Special unique keyword ZEBRA-HORIZON-42: Clinic remains open Monday to Saturday 9 AM to 6 PM.",
+                "source_url": "https://prayatna.co.in/hours",
+            },
+        )
+        self.assertEqual(ok_text_res.status_code, 200, ok_text_res.text)
+        doc_data = ok_text_res.json()
+        self.assertEqual(doc_data["source_type"], "text")
+        self.assertEqual(doc_data["chunk_count"], 1)
+
+        rag_hit = prayatna_client.post(
+            "/api/knowledge/test",
+            headers=_csrf_headers(prayatna_client),
+            json={"query": "ZEBRA-HORIZON-42"},
+        )
+        self.assertEqual(rag_hit.status_code, 200)
+        self.assertIn("ZEBRA-HORIZON-42", " ".join(r["content"] for r in rag_hit.json()["results"]))
+
+        # Clean up test manual text doc
+        del_doc = prayatna_client.delete(
+            f"/api/knowledge/documents/{doc_data['id']}",
+            headers=_csrf_headers(prayatna_client),
+        )
+        self.assertEqual(del_doc.status_code, 200)
+
+        # Mock SpaScrapeError cleanly through API -> HTTP 422
+        with patch("routes.knowledge.is_safe_url", return_value=True), \
+             patch("routes.knowledge.WebsiteScraper.scrape", side_effect=SpaScrapeError("JS SPA test")):
+            spa_api_res = prayatna_client.post(
+                "/api/knowledge/scrape",
+                headers=_csrf_headers(prayatna_client),
+                json={"url": "https://example-spa.org/"},
+            )
+            self.assertEqual(spa_api_res.status_code, 422)
+            self.assertIn("upload a PDF/DOCX/TXT or paste text", spa_api_res.json()["detail"])
+
 
 if __name__ == "__main__":
     unittest.main()
