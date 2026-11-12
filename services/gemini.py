@@ -295,6 +295,24 @@ def generate_suggested_queries(
                 "What are your timings and contact details?"
             ]
 
+def _extract_usage_metadata(response_obj: Any, model_name: str) -> Optional[Dict[str, Any]]:
+    """Extract prompt, output, and total token counts from a Google GenAI response or stream chunk."""
+    usage_meta = getattr(response_obj, "usage_metadata", None)
+    if usage_meta is None:
+        return None
+    input_tokens = max(0, int(getattr(usage_meta, "prompt_token_count", 0) or 0))
+    candidates_tokens = max(0, int(getattr(usage_meta, "candidates_token_count", 0) or 0))
+    thoughts_tokens = max(0, int(getattr(usage_meta, "thoughts_token_count", 0) or 0))
+    output_tokens = candidates_tokens + thoughts_tokens
+    total_tokens = int(getattr(usage_meta, "total_token_count", 0) or (input_tokens + output_tokens))
+    return {
+        "model_name": model_name,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": max(total_tokens, input_tokens + output_tokens),
+    }
+
+
 class GeminiService:
     def __init__(self):
         self.api_key = os.getenv("GEMINI_API_KEY", "").strip()
@@ -421,6 +439,7 @@ class GeminiService:
         organization_slug: Optional[str] = None,
         assistant_name: Optional[str] = None,
         custom_instructions: Optional[str] = None,
+        usage_out: Optional[Dict[str, Any]] = None,
     ) -> Tuple[str, str, bool]:
         """
         Generate response using Gemini API or friendly fallback in user's preferred language.
@@ -468,6 +487,10 @@ class GeminiService:
                 kwargs["config"] = config
 
             response = self._client.models.generate_content(**kwargs)
+            if usage_out is not None:
+                usage_info = _extract_usage_metadata(response, self.model_name)
+                if usage_info:
+                    usage_out.update(usage_info)
             response_text = response.text.strip() if response.text else ""
             if not response_text:
                 raise ValueError("Empty response received from Gemini.")
@@ -490,6 +513,7 @@ class GeminiService:
         organization_slug: Optional[str] = None,
         assistant_name: Optional[str] = None,
         custom_instructions: Optional[str] = None,
+        usage_out: Optional[Dict[str, Any]] = None,
     ):
         """
         Stream response tokens from Gemini in real time.
@@ -533,6 +557,10 @@ class GeminiService:
 
             stream = self._client.models.generate_content_stream(**kwargs)
             for chunk in stream:
+                if usage_out is not None:
+                    usage_info = _extract_usage_metadata(chunk, self.model_name)
+                    if usage_info:
+                        usage_out.update(usage_info)
                 if chunk.text:
                     yield chunk.text
         except Exception as e:

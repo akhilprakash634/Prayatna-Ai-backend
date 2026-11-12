@@ -1,4 +1,5 @@
 import json
+import os
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
@@ -88,21 +89,140 @@ def create_setup_token_for_user(db: Session, user_id: str, expires_hours: int = 
     return raw_token
 
 
+# Estimated USD pricing per 1,000,000 tokens: (input_per_1m, output_per_1m).
+MODEL_PRICING_PER_1M_USD: Tuple[Tuple[str, Tuple[float, float]], ...] = (
+    ("flash-lite", (0.10, 0.40)),
+    ("2.0-flash", (0.10, 0.40)),
+    ("flash", (0.30, 2.50)),
+    ("pro", (1.25, 10.00)),
+)
+DEFAULT_INPUT_COST_PER_1M_USD = 0.30
+DEFAULT_OUTPUT_COST_PER_1M_USD = 2.50
+
+
+def _parse_optional_rate(env_var: str) -> Optional[float]:
+    raw = os.getenv(env_var, "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+        return value if value >= 0 else None
+    except ValueError:
+        return None
+
+
+def get_model_token_rates_usd(model_name: Optional[str] = None) -> Tuple[float, float]:
+    """Return (input_per_1m_usd, output_per_1m_usd) from env overrides or model defaults."""
+    env_in = _parse_optional_rate("GEMINI_INPUT_COST_PER_1M_USD")
+    env_out = _parse_optional_rate("GEMINI_OUTPUT_COST_PER_1M_USD")
+
+    default_in, default_out = DEFAULT_INPUT_COST_PER_1M_USD, DEFAULT_OUTPUT_COST_PER_1M_USD
+    normalized = (model_name or "").strip().lower()
+    for needle, rates in MODEL_PRICING_PER_1M_USD:
+        if needle in normalized:
+            default_in, default_out = rates
+            break
+
+    return (
+        env_in if env_in is not None else default_in,
+        env_out if env_out is not None else default_out,
+    )
+
+
+def calculate_token_cost_usd(
+    model_name: Optional[str],
+    input_tokens: int,
+    output_tokens: int,
+) -> float:
+    """Estimate USD cost for an AI request based on input/output token counts."""
+    in_tok = max(0, int(input_tokens or 0))
+    out_tok = max(0, int(output_tokens or 0))
+    if in_tok == 0 and out_tok == 0:
+        return 0.0
+    input_rate, output_rate = get_model_token_rates_usd(model_name)
+    cost = (in_tok / 1_000_000.0) * input_rate + (out_tok / 1_000_000.0) * output_rate
+    return round(cost, 6)
+
+
 def record_usage(
     db: Session,
     organization_id: str,
     event_type: str,
     quantity: int = 1,
     metadata: Optional[Dict[str, Any]] = None,
+    token_usage: Optional[Dict[str, Any]] = None,
 ) -> UsageLog:
+    in_tok = max(0, int((token_usage or {}).get("input_tokens") or 0))
+    out_tok = max(0, int((token_usage or {}).get("output_tokens") or 0))
+    tot_tok = max(in_tok + out_tok, int((token_usage or {}).get("total_tokens") or 0))
+    model_name = ((token_usage or {}).get("model_name") or "").strip()[:100] or None
+    cost_usd = calculate_token_cost_usd(model_name, in_tok, out_tok)
+
     log = UsageLog(
         organization_id=organization_id,
         event_type=event_type,
         quantity=max(1, int(quantity)),
+        input_tokens=in_tok,
+        output_tokens=out_tok,
+        total_tokens=tot_tok,
+        estimated_cost_usd=cost_usd,
+        model_name=model_name,
         metadata_json=json.dumps(metadata) if metadata else None,
     )
     db.add(log)
     return log
+
+
+def get_token_usage_totals(
+    db: Session,
+    organization_id: Optional[str] = None,
+    since: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Aggregate input/output/total tokens and estimated USD cost across AI requests."""
+    query = db.query(
+        func.coalesce(func.sum(UsageLog.input_tokens), 0),
+        func.coalesce(func.sum(UsageLog.output_tokens), 0),
+        func.coalesce(func.sum(UsageLog.total_tokens), 0),
+        func.coalesce(func.sum(UsageLog.estimated_cost_usd), 0.0),
+    ).filter(UsageLog.event_type == "ai_request")
+
+    if organization_id is not None:
+        query = query.filter(UsageLog.organization_id == organization_id)
+    if since is not None:
+        query = query.filter(UsageLog.created_at >= since)
+
+    in_tok, out_tok, tot_tok, cost_usd = query.one()
+    return {
+        "input_tokens": int(in_tok or 0),
+        "output_tokens": int(out_tok or 0),
+        "total_tokens": int(tot_tok or 0),
+        "estimated_cost_usd": round(float(cost_usd or 0.0), 6),
+    }
+
+
+def get_token_usage_by_organization(db: Session) -> Dict[str, Dict[str, Any]]:
+    """Aggregate lifetime AI token counts and estimated USD cost keyed by organization_id."""
+    rows = (
+        db.query(
+            UsageLog.organization_id,
+            func.coalesce(func.sum(UsageLog.input_tokens), 0),
+            func.coalesce(func.sum(UsageLog.output_tokens), 0),
+            func.coalesce(func.sum(UsageLog.total_tokens), 0),
+            func.coalesce(func.sum(UsageLog.estimated_cost_usd), 0.0),
+        )
+        .filter(UsageLog.event_type == "ai_request")
+        .group_by(UsageLog.organization_id)
+        .all()
+    )
+    return {
+        org_id: {
+            "input_tokens": int(in_tok or 0),
+            "output_tokens": int(out_tok or 0),
+            "total_tokens": int(tot_tok or 0),
+            "estimated_cost_usd": round(float(cost_usd or 0.0), 6),
+        }
+        for org_id, in_tok, out_tok, tot_tok, cost_usd in rows
+    }
 
 
 def _billing_window_start(subscription: Optional[Subscription]) -> datetime:
@@ -145,6 +265,19 @@ def get_org_usage_summary(db: Session, organization_id: str) -> Dict[str, Any]:
     total_enquiries = db.query(Enquiry).filter(Enquiry.organization_id == organization_id).count()
     total_documents = db.query(KnowledgeDocument).filter(KnowledgeDocument.organization_id == organization_id).count()
 
+    cycle_tokens = get_token_usage_totals(db, organization_id=organization_id, since=window_start)
+    lifetime_tokens = get_token_usage_totals(db, organization_id=organization_id)
+    last_model_row = (
+        db.query(UsageLog.model_name)
+        .filter(
+            UsageLog.organization_id == organization_id,
+            UsageLog.event_type == "ai_request",
+            UsageLog.model_name.isnot(None),
+        )
+        .order_by(UsageLog.created_at.desc())
+        .first()
+    )
+
     return {
         "cycle_conversations": cycle_counts.get("conversation", 0),
         "cycle_ai_requests": cycle_counts.get("ai_request", 0),
@@ -156,6 +289,15 @@ def get_org_usage_summary(db: Session, organization_id: str) -> Dict[str, Any]:
         "total_ai_requests": lifetime_counts.get("ai_request", 0),
         "conversation_limit": subscription.conversation_limit if subscription else 200,
         "ai_usage_limit": subscription.ai_usage_limit if subscription else 2000,
+        "cycle_input_tokens": cycle_tokens["input_tokens"],
+        "cycle_output_tokens": cycle_tokens["output_tokens"],
+        "cycle_total_tokens": cycle_tokens["total_tokens"],
+        "cycle_estimated_cost_usd": cycle_tokens["estimated_cost_usd"],
+        "total_input_tokens": lifetime_tokens["input_tokens"],
+        "total_output_tokens": lifetime_tokens["output_tokens"],
+        "total_tokens": lifetime_tokens["total_tokens"],
+        "total_estimated_cost_usd": lifetime_tokens["estimated_cost_usd"],
+        "last_model_used": last_model_row[0] if last_model_row else None,
     }
 
 

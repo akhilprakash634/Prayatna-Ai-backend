@@ -57,6 +57,8 @@ from services.tenant import (
     generate_unique_chatbot_id,
     get_org_usage_summary,
     get_plan_defaults,
+    get_token_usage_by_organization,
+    get_token_usage_totals,
     normalize_plan_name,
 )
 
@@ -137,6 +139,7 @@ def get_super_admin_dashboard(
         .scalar()
         or 0
     )
+    platform_tokens = get_token_usage_totals(db)
 
     return SuperAdminDashboardStats(
         total_organizations=total_orgs,
@@ -145,6 +148,10 @@ def get_super_admin_dashboard(
         total_conversations=total_conversations,
         total_enquiries=total_enquiries,
         total_ai_requests=total_ai_requests,
+        total_input_tokens=platform_tokens["input_tokens"],
+        total_output_tokens=platform_tokens["output_tokens"],
+        total_tokens=platform_tokens["total_tokens"],
+        total_estimated_cost_usd=platform_tokens["estimated_cost_usd"],
     )
 
 
@@ -163,6 +170,7 @@ def list_clients(
         query = query.filter(Organization.name.ilike(term) | Organization.slug.ilike(term))
 
     orgs = query.order_by(Organization.created_at.desc()).all()
+    token_usage_by_org = get_token_usage_by_organization(db)
 
     results: List[OrganizationSummary] = []
     for org in orgs:
@@ -181,6 +189,7 @@ def list_clients(
             .scalar()
             or 0
         )
+        org_tokens = token_usage_by_org.get(org.id, {})
 
         results.append(
             OrganizationSummary(
@@ -197,6 +206,10 @@ def list_clients(
                 total_conversations=conv_count,
                 total_enquiries=enq_count,
                 total_ai_requests=ai_count,
+                total_input_tokens=org_tokens.get("input_tokens", 0),
+                total_output_tokens=org_tokens.get("output_tokens", 0),
+                total_tokens=org_tokens.get("total_tokens", 0),
+                estimated_cost_usd=org_tokens.get("estimated_cost_usd", 0.0),
                 created_at=org.created_at,
             )
         )

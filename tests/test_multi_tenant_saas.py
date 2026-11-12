@@ -663,6 +663,135 @@ class MultiTenantSaaSAcceptanceTests(unittest.TestCase):
         self.assertEqual(chat_res.status_code, 200, chat_res.text)
         self.assertTrue(len(chat_res.json()["message"]) > 0)
 
+    def test_super_admin_per_tenant_token_usage_and_cost(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock, patch
+        import routes.chat as chat_route
+        from services.tenant import calculate_token_cost_usd
+
+        super_client = self._new_client()
+        s_login = super_client.post(
+            "/api/auth/super-admin/login",
+            json={"email": "superadmin@testplatform.local", "password": "SuperSecret#2026"},
+        )
+        self.assertEqual(s_login.status_code, 200, s_login.text)
+
+        baseline_dash = super_client.get("/api/super-admin/dashboard").json()
+
+        # Create an isolated tenant organization to verify exact token & cost attribution
+        create_res = super_client.post(
+            "/api/super-admin/clients",
+            headers=_csrf_headers(super_client),
+            json={
+                "organization_name": "Token Metrics Clinic",
+                "organization_slug": "token-clinic",
+                "admin_name": "Admin Token",
+                "admin_email": "admin@tokenclinic.example",
+                "subscription_plan": "Basic",
+                "account_status": "active",
+            },
+        )
+        self.assertEqual(create_res.status_code, 201, create_res.text)
+        token_org = create_res.json()["organization"]
+        token_org_id = token_org["id"]
+        token_bot_id = token_org["chatbot"]["chatbot_id"]
+
+        anon = self._new_client()
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = [
+            SimpleNamespace(
+                text="Here are our pediatric therapy hours.",
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=1200,
+                    candidates_token_count=400,
+                    thoughts_token_count=0,
+                    total_token_count=1600,
+                ),
+            ),
+            SimpleNamespace(
+                text="Prayatna welcomes walk-in and scheduled visits.",
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=2000,
+                    candidates_token_count=500,
+                    thoughts_token_count=0,
+                    total_token_count=2500,
+                ),
+            ),
+        ]
+
+        model_used = chat_route.gemini_service.model_name
+        with patch.object(chat_route.gemini_service, "_client", mock_client):
+            res_token_org = anon.post(
+                "/api/chat",
+                json={"chatbot_id": token_bot_id, "message": "What are your clinic hours?"},
+            )
+            self.assertEqual(res_token_org.status_code, 200, res_token_org.text)
+
+            res_prayatna = anon.post(
+                "/api/chat",
+                json={"chatbot_id": "prayatna-bot", "message": "How do I visit Prayatna?"},
+            )
+            self.assertEqual(res_prayatna.status_code, 200, res_prayatna.text)
+
+            # Also verify streaming token capture adds accurately to token-clinic
+            mock_client.models.generate_content_stream.return_value = iter([
+                SimpleNamespace(text="We are open ", usage_metadata=None),
+                SimpleNamespace(
+                    text="Mon-Sat 9am-6pm.",
+                    usage_metadata=SimpleNamespace(
+                        prompt_token_count=300,
+                        candidates_token_count=100,
+                        thoughts_token_count=0,
+                        total_token_count=400,
+                    ),
+                ),
+            ])
+            stream_res = anon.post(
+                "/api/chat/stream",
+                json={"chatbot_id": token_bot_id, "message": "What days are you open?"},
+            )
+            self.assertEqual(stream_res.status_code, 200, stream_res.text)
+
+        expected_token_org_cost = round(
+            calculate_token_cost_usd(model_used, 1200, 400)
+            + calculate_token_cost_usd(model_used, 300, 100),
+            6,
+        )
+        expected_prayatna_cost = calculate_token_cost_usd(model_used, 2000, 500)
+        self.assertGreater(expected_token_org_cost, 0.0)
+
+        # Super Admin client detail shows exact per-tenant tokens & cost
+        detail_res = super_client.get(f"/api/super-admin/clients/{token_org_id}")
+        self.assertEqual(detail_res.status_code, 200, detail_res.text)
+        detail_usage = detail_res.json()["usage"]
+        self.assertEqual(detail_usage["cycle_input_tokens"], 1500)
+        self.assertEqual(detail_usage["cycle_output_tokens"], 500)
+        self.assertEqual(detail_usage["cycle_total_tokens"], 2000)
+        self.assertEqual(detail_usage["total_tokens"], 2000)
+        self.assertAlmostEqual(detail_usage["total_estimated_cost_usd"], expected_token_org_cost, places=6)
+        self.assertEqual(detail_usage["last_model_used"], model_used)
+
+        # Super Admin list shows per-org tokens isolated from Prayatna's call
+        clients_res = super_client.get("/api/super-admin/clients?search=token-clinic")
+        self.assertEqual(clients_res.status_code, 200, clients_res.text)
+        listed = clients_res.json()
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0]["total_input_tokens"], 1500)
+        self.assertEqual(listed[0]["total_output_tokens"], 500)
+        self.assertEqual(listed[0]["total_tokens"], 2000)
+        self.assertAlmostEqual(listed[0]["estimated_cost_usd"], expected_token_org_cost, places=6)
+
+        # Super Admin platform dashboard sums across tenants cleanly
+        after_dash = super_client.get("/api/super-admin/dashboard").json()
+        self.assertEqual(after_dash["total_input_tokens"] - baseline_dash["total_input_tokens"], 3500)
+        self.assertEqual(after_dash["total_output_tokens"] - baseline_dash["total_output_tokens"], 1000)
+        self.assertEqual(after_dash["total_tokens"] - baseline_dash["total_tokens"], 4500)
+        self.assertAlmostEqual(
+            after_dash["total_estimated_cost_usd"] - baseline_dash["total_estimated_cost_usd"],
+            round(expected_token_org_cost + expected_prayatna_cost, 6),
+            places=6,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -365,6 +365,15 @@ class UsageSummaryResponse(BaseModel):
     total_ai_requests: int
     conversation_limit: int
     ai_usage_limit: int
+    cycle_input_tokens: int = 0
+    cycle_output_tokens: int = 0
+    cycle_total_tokens: int = 0
+    cycle_estimated_cost_usd: float = 0.0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_tokens: int = 0
+    total_estimated_cost_usd: float = 0.0
+    last_model_used: Optional[str] = None
 
 
 class OrganizationCreateRequest(BaseModel):
@@ -414,6 +423,10 @@ class OrganizationSummary(BaseModel):
     total_conversations: int = 0
     total_enquiries: int = 0
     total_ai_requests: int = 0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_tokens: int = 0
+    estimated_cost_usd: float = 0.0
     created_at: datetime
 
     @field_serializer("created_at")
@@ -475,6 +488,10 @@ class SuperAdminDashboardStats(BaseModel):
     total_conversations: int
     total_enquiries: int
     total_ai_requests: int
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_tokens: int = 0
+    total_estimated_cost_usd: float = 0.0
 
 
 class AuditLogResponse(BaseModel):

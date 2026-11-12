@@ -172,6 +172,7 @@ def handle_chat(
         collection_name=setting.knowledge_collection,
     )
 
+    token_usage = {}
     ai_response_text, intent, requires_followup = gemini_service.generate_chat_response(
         user_message=message_text,
         retrieved_chunks=retrieved_chunks,
@@ -181,6 +182,7 @@ def handle_chat(
         organization_slug=org.slug,
         assistant_name=setting.assistant_name,
         custom_instructions=setting.custom_instructions,
+        usage_out=token_usage,
     )
 
     if conversation.category in ("general", None) and intent != "general":
@@ -220,7 +222,14 @@ def handle_chat(
     )
     db.add(assistant_msg_record)
     conversation.updated_at = utc_now()
-    record_usage(db, org.id, "ai_request", 1, {"conversation_id": conversation.id})
+    record_usage(
+        db,
+        org.id,
+        "ai_request",
+        1,
+        {"conversation_id": conversation.id},
+        token_usage=token_usage,
+    )
     db.commit()
 
     suggested_queries = generate_suggested_queries(intent, language, organization_name=org.name)
@@ -308,6 +317,7 @@ def handle_chat_stream(payload: ChatRequest, request: Request):
 
     def stream_generator():
         assembled_chunks = []
+        token_usage = {}
         stream_db = SessionLocal()
         try:
             init_payload = json.dumps(
@@ -331,6 +341,7 @@ def handle_chat_stream(payload: ChatRequest, request: Request):
                 organization_slug=org_slug,
                 assistant_name=assistant_name,
                 custom_instructions=custom_instructions,
+                usage_out=token_usage,
             ):
                 assembled_chunks.append(token)
                 chunk_payload = json.dumps({"type": "chunk", "text": token})
@@ -370,7 +381,14 @@ def handle_chat_stream(payload: ChatRequest, request: Request):
                 if enquiry_data:
                     conv_record.status = "lead_captured"
 
-            record_usage(stream_db, org_id, "ai_request", 1, {"conversation_id": conv_id})
+            record_usage(
+                stream_db,
+                org_id,
+                "ai_request",
+                1,
+                {"conversation_id": conv_id},
+                token_usage=token_usage,
+            )
             stream_db.commit()
 
             suggested_queries = generate_suggested_queries(intent, language, organization_name=org_name)

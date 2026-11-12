@@ -30,12 +30,17 @@ def _existing_columns(db: Session, table_name: str) -> set[str]:
     return {row[1] for row in rows}
 
 
-def _ensure_column_and_index(db: Session, table_name: str, column_name: str, column_ddl: str) -> None:
+def _ensure_column(db: Session, table_name: str, column_name: str, column_ddl: str) -> None:
+    """Add a column to an existing SQLite table idempotently."""
     cols = _existing_columns(db, table_name)
     if column_name not in cols:
         logger.info("Adding column '%s' to table '%s'", column_name, table_name)
         db.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_ddl}"))
         db.commit()
+
+
+def _ensure_column_and_index(db: Session, table_name: str, column_name: str, column_ddl: str) -> None:
+    _ensure_column(db, table_name, column_name, column_ddl)
 
     idx_name = f"ix_{table_name}_{column_name}"
     db.execute(text(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table_name} ({column_name})"))
@@ -58,6 +63,11 @@ def run_migrations() -> dict:
         _ensure_column_and_index(db, "enquiries", "organization_id", "VARCHAR(36)")
         _ensure_column_and_index(db, "knowledge_documents", "organization_id", "VARCHAR(36)")
         _ensure_column_and_index(db, "chatbot_settings", "theme_config_json", "TEXT")
+        _ensure_column(db, "usage_logs", "input_tokens", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(db, "usage_logs", "output_tokens", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(db, "usage_logs", "total_tokens", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(db, "usage_logs", "estimated_cost_usd", "REAL NOT NULL DEFAULT 0.0")
+        _ensure_column(db, "usage_logs", "model_name", "VARCHAR(100)")
 
         # 2. Ensure Prayatna organization exists
         prayatna_org = db.query(Organization).filter(Organization.slug == "prayatna").first()
