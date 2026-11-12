@@ -18,6 +18,7 @@ from models import (
     UsageLog,
     utc_now,
 )
+from schemas import ChatbotThemeConfig
 from services.security import hash_token
 
 PLAN_DEFAULTS: Dict[str, Dict[str, int]] = {
@@ -222,6 +223,46 @@ def resolve_public_chatbot(
     return org, setting
 
 
+DEFAULT_PRAYATNA_PROMPTS = [
+    "What therapies do you offer?",
+    "How do I book an assessment?",
+    "Where are your centres located?",
+    "What age groups do you support?",
+]
+
+DEFAULT_GENERIC_PROMPTS = [
+    "What services do you offer?",
+    "How can I contact your team?",
+    "How do I book an appointment?",
+]
+
+
+def resolve_chatbot_theme_config(org: Organization, setting: ChatbotSetting) -> Dict[str, Any]:
+    """Parse per-brand theme config JSON and apply clean org-specific starter prompt defaults."""
+    raw: Dict[str, Any] = {}
+    if getattr(setting, "theme_config_json", None):
+        try:
+            parsed = json.loads(setting.theme_config_json)
+            if isinstance(parsed, dict):
+                raw = parsed
+        except (TypeError, ValueError):
+            raw = {}
+
+    if "starter_prompts" not in raw:
+        raw["starter_prompts"] = (
+            list(DEFAULT_PRAYATNA_PROMPTS) if org.slug == "prayatna" else list(DEFAULT_GENERIC_PROMPTS)
+        )
+    if "tagline" not in raw:
+        raw["tagline"] = "Instant answers & booking support"
+
+    return ChatbotThemeConfig(**raw).model_dump()
+
+
+def serialize_chatbot_theme_config(theme: ChatbotThemeConfig) -> str:
+    """Serialize validated ChatbotThemeConfig cleanly for SQLite persistence."""
+    return json.dumps(theme.model_dump())
+
+
 def get_public_chatbot_metadata(db: Session, chatbot_id: Optional[str] = None) -> Dict[str, Any]:
     """Return safe public branding config (including suspended notice if inactive)."""
     clean_bot_id = (chatbot_id or "").strip()
@@ -258,5 +299,6 @@ def get_public_chatbot_metadata(db: Session, chatbot_id: Optional[str] = None) -
         "phone": org.phone,
         "is_available": is_available,
         "unavailable_reason": unavailable_reason,
+        "theme_config": resolve_chatbot_theme_config(org, setting),
     }
 

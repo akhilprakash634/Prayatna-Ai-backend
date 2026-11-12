@@ -6,13 +6,23 @@ from models import ChatbotSetting, Organization, Subscription
 from schemas import (
     ChatbotConfigResponse,
     ChatbotConfigUpdate,
+    ChatbotThemeConfig,
     OrganizationUpdateRequest,
     ProfileUpdateRequest,
     SubscriptionResponse,
     UsageSummaryResponse,
 )
-from services.security import AuthContext, require_client_admin, validate_hex_color
-from services.tenant import get_org_usage_summary
+from services.security import (
+    AuthContext,
+    require_client_admin,
+    validate_hex_color,
+    validate_safe_url_or_path,
+)
+from services.tenant import (
+    get_org_usage_summary,
+    resolve_chatbot_theme_config,
+    serialize_chatbot_theme_config,
+)
 
 router = APIRouter(prefix="/api/admin", tags=["Client Admin Settings"])
 
@@ -33,6 +43,7 @@ def _to_chatbot_response(org: Organization, setting: ChatbotSetting) -> ChatbotC
         organization_name=org.name,
         organization_slug=org.slug,
         organization_status=org.status,
+        theme_config=ChatbotThemeConfig(**resolve_chatbot_theme_config(org, setting)),
     )
 
 
@@ -66,11 +77,13 @@ def update_chatbot_config(
     if req.primary_color is not None:
         setting.primary_color = validate_hex_color(req.primary_color)
     if req.logo_url is not None:
-        setting.logo_url = req.logo_url.strip() or None
+        setting.logo_url = validate_safe_url_or_path(req.logo_url, "logo_url")
     if req.custom_instructions is not None:
         setting.custom_instructions = req.custom_instructions.strip() or None
     if req.is_active is not None:
         setting.is_active = bool(req.is_active)
+    if req.theme_config is not None:
+        setting.theme_config_json = serialize_chatbot_theme_config(req.theme_config)
 
     db.commit()
     db.refresh(setting)

@@ -482,11 +482,17 @@ class MultiTenantSaaSAcceptanceTests(unittest.TestCase):
         self.assertGreaterEqual(len(prayatna_client.get("/api/knowledge/documents").json()), 8)
 
         # Public rate limiting triggers 429 after burst
+        from unittest.mock import patch
+
         self.security.public_chat_rate_limiter.reset()
-        statuses = [
-            anon.post("/api/chat", json={"message": "Rate limit ping"}).status_code
-            for _ in range(27)
-        ]
+        with patch(
+            "routes.chat.gemini_service.generate_chat_response",
+            return_value=("Test response", "general", False),
+        ):
+            statuses = [
+                anon.post("/api/chat", json={"message": "Rate limit ping"}).status_code
+                for _ in range(27)
+            ]
         self.assertIn(429, statuses)
 
     def test_spa_scraper_ssrf_and_manual_text_knowledge(self):
@@ -582,6 +588,80 @@ class MultiTenantSaaSAcceptanceTests(unittest.TestCase):
             )
             self.assertEqual(spa_api_res.status_code, 422)
             self.assertIn("upload a PDF/DOCX/TXT or paste text", spa_api_res.json()["detail"])
+
+    def test_chatbot_theme_config_persistence_and_validation(self):
+        from unittest.mock import patch
+
+        prayatna_client = self._new_client()
+        login_res = prayatna_client.post(
+            "/api/auth/login",
+            json={"email": "admin@prayatna.co.in", "password": "PrayatnaSecret#2026"},
+        )
+        self.assertEqual(login_res.status_code, 200)
+
+        # Reject unsafe javascript: logo_url and invalid hex color
+        bad_logo = prayatna_client.patch(
+            "/api/admin/chatbot",
+            headers=_csrf_headers(prayatna_client),
+            json={"logo_url": "javascript:alert(1)"},
+        )
+        self.assertEqual(bad_logo.status_code, 422)
+
+        bad_color = prayatna_client.patch(
+            "/api/admin/chatbot",
+            headers=_csrf_headers(prayatna_client),
+            json={"primary_color": "red"},
+        )
+        self.assertEqual(bad_color.status_code, 422)
+
+        # Save rich brand theme_config and verify persistence on both admin & public config endpoints
+        patch_res = prayatna_client.patch(
+            "/api/admin/chatbot",
+            headers=_csrf_headers(prayatna_client),
+            json={
+                "primary_color": "#4F46E5",
+                "logo_url": "https://prayatna.co.in/logo.png",
+                "theme_config": {
+                    "theme_mode": "dark",
+                    "header_style": "gradient",
+                    "border_radius": "pill",
+                    "font_family": "plus_jakarta",
+                    "tagline": "Custom Concierge Support",
+                    "starter_prompts": ["How do I book?", "Share therapy fees"],
+                    "enquiry_enabled": True,
+                    "enquiry_button_label": "Book Now",
+                    "widget_position": "left",
+                    "launcher_label": "Chat Live",
+                    "show_powered_by": False,
+                },
+            },
+        )
+        self.assertEqual(patch_res.status_code, 200, patch_res.text)
+        saved_theme = patch_res.json()["theme_config"]
+        self.assertEqual(saved_theme["theme_mode"], "dark")
+        self.assertEqual(saved_theme["widget_position"], "left")
+        self.assertEqual(saved_theme["starter_prompts"], ["How do I book?", "Share therapy fees"])
+
+        anon = self._new_client()
+        public_cfg = anon.get("/api/chat/config?bot=prayatna-bot")
+        self.assertEqual(public_cfg.status_code, 200)
+        cfg_data = public_cfg.json()
+        self.assertEqual(cfg_data["primary_color"], "#4f46e5")
+        self.assertEqual(cfg_data["theme_config"]["header_style"], "gradient")
+        self.assertEqual(cfg_data["theme_config"]["launcher_label"], "Chat Live")
+        self.assertFalse(cfg_data["theme_config"]["show_powered_by"])
+
+        # Omitting language on /api/chat defaults cleanly to Auto without failing
+        with patch(
+            "routes.chat.gemini_service.generate_chat_response",
+            return_value=("We offer multidisciplinary support services.", "service_enquiry", False),
+        ):
+            chat_res = anon.post(
+                "/api/chat",
+                json={"chatbot_id": "prayatna-bot", "message": "What services do you offer?"},
+            )
+        self.assertEqual(chat_res.status_code, 200, chat_res.text)
+        self.assertTrue(len(chat_res.json()["message"]) > 0)
 
 
 if __name__ == "__main__":

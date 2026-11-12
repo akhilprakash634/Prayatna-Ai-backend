@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_serializer, field_validator
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime, timezone
 
 def _serialize_utc(dt: Optional[datetime]) -> Optional[str]:
@@ -19,7 +19,7 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[str] = None
     chatbot_id: Optional[str] = Field(None, max_length=100)
     message: str = Field(..., min_length=1, max_length=2000)
-    language: Optional[str] = Field("English", description="Preferred response language")
+    language: Optional[str] = Field("Auto", description="Preferred response language")
 
 class ChatResponse(BaseModel):
     conversation_id: str
@@ -237,6 +237,50 @@ class SessionResponse(BaseModel):
     csrf_token: Optional[str] = None
 
 
+class ChatbotThemeConfig(BaseModel):
+    theme_mode: Literal["light", "soft", "dark"] = "light"
+    header_style: Literal["clean", "solid", "gradient"] = "clean"
+    border_radius: Literal["rounded", "pill", "sharp"] = "rounded"
+    font_family: Literal["inter", "plus_jakarta", "dm_sans", "system"] = "inter"
+    tagline: Optional[str] = Field(default=None, max_length=120)
+    starter_prompts: List[str] = Field(default_factory=list)
+    enquiry_enabled: bool = True
+    enquiry_button_label: str = Field(default="Request Callback", min_length=2, max_length=40)
+    widget_position: Literal["right", "left"] = "right"
+    launcher_label: Optional[str] = Field(default=None, max_length=32)
+    show_powered_by: bool = True
+
+    @field_validator("starter_prompts", mode="before")
+    @classmethod
+    def normalize_starter_prompts(cls, v: Any) -> List[str]:
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            raise ValueError("starter_prompts must be a list of strings.")
+        cleaned: List[str] = []
+        for item in v:
+            text = str(item or "").strip()
+            if text:
+                cleaned.append(text[:120])
+            if len(cleaned) >= 6:
+                break
+        return cleaned
+
+    @field_validator("tagline", "launcher_label", mode="before")
+    @classmethod
+    def strip_optional_text(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        val = str(v).strip()
+        return val or None
+
+    @field_validator("enquiry_button_label", mode="before")
+    @classmethod
+    def strip_cta_label(cls, v: Any) -> str:
+        val = str(v or "").strip()
+        return val or "Request Callback"
+
+
 class PublicChatbotConfig(BaseModel):
     chatbot_id: str
     organization_name: str
@@ -250,6 +294,7 @@ class PublicChatbotConfig(BaseModel):
     phone: Optional[str] = None
     is_available: bool
     unavailable_reason: Optional[str] = None
+    theme_config: ChatbotThemeConfig = Field(default_factory=ChatbotThemeConfig)
 
 
 class ChatbotConfigResponse(BaseModel):
@@ -267,6 +312,7 @@ class ChatbotConfigResponse(BaseModel):
     organization_name: str
     organization_slug: str
     organization_status: str
+    theme_config: ChatbotThemeConfig = Field(default_factory=ChatbotThemeConfig)
 
 
 class ChatbotConfigUpdate(BaseModel):
@@ -277,6 +323,7 @@ class ChatbotConfigUpdate(BaseModel):
     logo_url: Optional[str] = Field(None, max_length=500)
     custom_instructions: Optional[str] = Field(None, max_length=4000)
     is_active: Optional[bool] = None
+    theme_config: Optional[ChatbotThemeConfig] = None
 
 
 class SubscriptionResponse(BaseModel):

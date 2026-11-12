@@ -57,6 +57,7 @@ def run_migrations() -> dict:
         _ensure_column_and_index(db, "messages", "organization_id", "VARCHAR(36)")
         _ensure_column_and_index(db, "enquiries", "organization_id", "VARCHAR(36)")
         _ensure_column_and_index(db, "knowledge_documents", "organization_id", "VARCHAR(36)")
+        _ensure_column_and_index(db, "chatbot_settings", "theme_config_json", "TEXT")
 
         # 2. Ensure Prayatna organization exists
         prayatna_org = db.query(Organization).filter(Organization.slug == "prayatna").first()

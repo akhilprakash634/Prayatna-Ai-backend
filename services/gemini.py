@@ -376,11 +376,21 @@ class GeminiService:
         if custom_instructions and custom_instructions.strip():
             base_instructions = f"{base_instructions}\n\nORGANIZATION SPECIFIC INSTRUCTIONS:\n{custom_instructions.strip()}"
 
-        language_instruction = (
-            f"MANDATORY RESPONSE LANGUAGE: {language.upper()}\n"
-            f"- Compose your ENTIRE response in {language}.\n"
-            f"- Use natural, fluent, and respectful {language} phrasing.\n"
-        )
+        normalized_lang = (language or "Auto").strip()
+        if not normalized_lang or normalized_lang.lower() == "auto":
+            language_instruction = (
+                "RESPONSE LANGUAGE:\n"
+                "- Automatically respond in the exact same language as the visitor's CURRENT MESSAGE.\n"
+                "- Default to clear, natural English if the visitor's message is in English or ambiguous.\n"
+            )
+            closing_lang_hint = "in the visitor's language"
+        else:
+            language_instruction = (
+                f"MANDATORY RESPONSE LANGUAGE: {normalized_lang.upper()}\n"
+                f"- Compose your ENTIRE response in {normalized_lang}.\n"
+                f"- Use natural, fluent, and respectful {normalized_lang} phrasing.\n"
+            )
+            closing_lang_hint = f"entirely in {normalized_lang}"
 
         brevity_instruction = (
             "CRITICAL LENGTH CONSTRAINT (STRICT):\n"
@@ -397,7 +407,7 @@ class GeminiService:
             f"ORGANIZATIONAL KNOWLEDGE RETRIEVED ({org_label}):\n{context_text}\n\n"
             f"RECENT CONVERSATION HISTORY:\n{history_str}\n\n"
             f"CURRENT CUSTOMER MESSAGE:\n{user_message}\n\n"
-            f"Please respond concisely (under 80 words) entirely in {language}:"
+            f"Please respond concisely (under 80 words) {closing_lang_hint}:"
         )
         return full_prompt, org_label
 

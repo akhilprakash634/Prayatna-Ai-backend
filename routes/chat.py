@@ -163,7 +163,7 @@ def handle_chat(
         .all()
     )
     history_dicts = [{"role": m.role, "content": m.content} for m in past_messages]
-    language = (payload.language or "English").strip()
+    language = (payload.language or "Auto").strip()
 
     retrieved_chunks = rag_service.query(
         message_text,
@@ -274,7 +274,7 @@ def handle_chat_stream(payload: ChatRequest, request: Request):
             .all()
         )
         history_dicts = [{"role": m.role, "content": m.content} for m in past_messages]
-        language = (payload.language or "English").strip()
+        language = (payload.language or "Auto").strip()
 
         retrieved_chunks = rag_service.query(
             message_text,

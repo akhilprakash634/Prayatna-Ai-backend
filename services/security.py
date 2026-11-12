@@ -245,6 +245,22 @@ def validate_hex_color(color: str) -> str:
     return val.lower()
 
 
+def validate_safe_url_or_path(url: Optional[str], field_name: str = "logo_url") -> Optional[str]:
+    """Allow safe http(s) URLs or single-leading-slash relative paths; block javascript:/data: URIs."""
+    val = (url or "").strip()
+    if not val:
+        return None
+    if val.startswith("/") and not val.startswith("//"):
+        return val
+    lower = val.lower()
+    if lower.startswith("https://") or lower.startswith("http://"):
+        return val
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=f"{field_name} must start with https://, http://, or /.",
+    )
+
+
 @dataclass
 class AuthContext:
     user: User

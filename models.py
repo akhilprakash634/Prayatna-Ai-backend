@@ -81,6 +81,7 @@ class ChatbotSetting(Base):
     primary_color = Column(String(20), nullable=False, default="#0d9488")
     logo_url = Column(String(500), nullable=True)
     custom_instructions = Column(Text, nullable=True)
+    theme_config_json = Column(Text, nullable=True)
     knowledge_collection = Column(String(120), nullable=False, default="default_knowledge")
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=utc_now)
