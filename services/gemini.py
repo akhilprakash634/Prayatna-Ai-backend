@@ -365,7 +365,13 @@ class GeminiService:
             title = chunk.get("title", f"Document Chunk {idx + 1}")
             url = chunk.get("url", "")
             content = chunk.get("content", "")
-            context_blocks.append(f"--- SOURCE [{idx + 1}]: {title} ({url}) ---\n{content}\n")
+            source_type = chunk.get("source_type") or chunk.get("metadata", {}).get("source_type", "")
+            is_doc = source_type in ("document", "pdf", "docx", "txt", "text") or url == "Local Upload" or not str(url).startswith("http")
+            if is_doc:
+                header = f"--- [AUTHORITATIVE INTERNAL DOCUMENT {idx + 1}: {title}] ---"
+            else:
+                header = f"--- [WEBSITE RESOURCE {idx + 1}: {title} ({url})] ---"
+            context_blocks.append(f"{header}\n{content}\n")
 
         context_text = "\n".join(context_blocks) if context_blocks else "No specific documents found in knowledge base."
 
@@ -388,11 +394,19 @@ class GeminiService:
                 f"You are {ai_label}, the virtual support assistant for {org_label}.\n"
                 f"Your role is to assist visitors and customers with concise, accurate, and polite answers using ONLY {org_label}'s knowledge base below.\n"
                 f"Never mention any other organization or external clinic. Never diagnose medical conditions or request OTPs/CVVs/passwords.\n"
-                f"If the customer wants to schedule an appointment, book a service, or request a callback, ask briefly in ONE sentence for their Name, Phone Number, and requirement."
+                f"If the customer wants to schedule an appointment, book a service, or request a callback, answer any specific questions first, then ask briefly in ONE sentence for their Name, Phone Number, and requirement."
             )
 
         if custom_instructions and custom_instructions.strip():
             base_instructions = f"{base_instructions}\n\nORGANIZATION SPECIFIC INSTRUCTIONS:\n{custom_instructions.strip()}"
+
+        grounding_instruction = (
+            "AUTHORITATIVE KNOWLEDGE GROUNDING & PRIORITY (CRITICAL):\n"
+            "- You MUST directly answer the visitor's question using the specific information, policies, guidelines, numbers, and facts found in the ORGANIZATIONAL KNOWLEDGE RETRIEVED section below.\n"
+            "- INTERNAL DOCUMENTS (labeled [AUTHORITATIVE INTERNAL DOCUMENT]) contain the organization's official, updated policies and procedures. ALWAYS prioritize information from uploaded documents over generic summaries or website copy.\n"
+            "- If the retrieved knowledge contains the answer to the visitor's question (e.g. fees, rules, timings, criteria, staff, services), state those specific facts directly. Do NOT default to asking for contact details or giving a generic deflection when the specific answer is present in the knowledge base.\n"
+            "- Only offer a brief follow-up or callback prompt (asking for Name/Phone) AFTER providing the direct answer from the knowledge base, or when the requested details are truly missing from the documents.\n"
+        )
 
         normalized_lang = (language or "Auto").strip()
         if not normalized_lang or normalized_lang.lower() == "auto":
@@ -412,7 +426,7 @@ class GeminiService:
 
         brevity_instruction = (
             "CRITICAL LENGTH CONSTRAINT (STRICT):\n"
-            "- Keep your response extremely brief: 2 to 4 sentences maximum (approx 45 to 80 words total).\n"
+            "- Keep your response concise: 2 to 4 sentences (approx 45 to 80 words total).\n"
             "- Do NOT repeat greeting intros on every turn.\n"
             "- Answer the visitor's immediate question directly and concisely based strictly on the retrieved knowledge.\n"
             "- End with ONE brief call to action or question if needed.\n"
@@ -420,6 +434,7 @@ class GeminiService:
 
         full_prompt = (
             f"SYSTEM INSTRUCTIONS:\n{base_instructions}\n\n"
+            f"{grounding_instruction}\n"
             f"{brevity_instruction}\n"
             f"{language_instruction}\n"
             f"ORGANIZATIONAL KNOWLEDGE RETRIEVED ({org_label}):\n{context_text}\n\n"

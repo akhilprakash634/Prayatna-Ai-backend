@@ -167,7 +167,7 @@ def handle_chat(
 
     retrieved_chunks = rag_service.query(
         message_text,
-        top_k=5,
+        top_k=6,
         org_slug=org.slug,
         collection_name=setting.knowledge_collection,
     )
@@ -287,7 +287,7 @@ def handle_chat_stream(payload: ChatRequest, request: Request):
 
         retrieved_chunks = rag_service.query(
             message_text,
-            top_k=3,
+            top_k=6,
             org_slug=org.slug,
             collection_name=setting.knowledge_collection,
         )

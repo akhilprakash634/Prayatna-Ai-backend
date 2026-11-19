@@ -178,6 +178,7 @@ class RAGService:
                         "metadata": meta,
                         "title": meta.get("title", "Knowledge Resource"),
                         "url": meta.get("url", ""),
+                        "source_type": meta.get("source_type", "document"),
                         "score": round(1.0 - dist, 4) if dist is not None else 0.0,
                     }
                 )

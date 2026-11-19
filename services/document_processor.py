@@ -19,8 +19,8 @@ def sanitize_filename(filename: str) -> str:
         raise ValueError(f"Unsupported file extension: {ext}. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}")
     return cleaned
 
-def chunk_text(text: str, chunk_size: int = 500, overlap: int = 80) -> List[str]:
-    """Chunk text by words with specified overlap."""
+def chunk_text(text: str, chunk_size: int = 200, overlap: int = 40) -> List[str]:
+    """Chunk text by words with specified overlap (defaults aligned with MiniLM 256-token limit)."""
     words = text.split()
     if not words:
         return []
@@ -80,5 +80,5 @@ class DocumentProcessor:
         if not cleaned:
             raise ValueError("No readable text found in document.")
 
-        chunks = chunk_text(cleaned, chunk_size=450, overlap=70)
+        chunks = chunk_text(cleaned, chunk_size=200, overlap=40)
         return cleaned, chunks

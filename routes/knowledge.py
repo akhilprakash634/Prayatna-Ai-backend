@@ -238,7 +238,7 @@ def add_text_knowledge(
             detail="Please enter at least 20 characters of readable text.",
         )
 
-    chunks = chunk_text(cleaned_content, chunk_size=450, overlap=70)
+    chunks = chunk_text(cleaned_content, chunk_size=200, overlap=40)
     if not chunks:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No readable text chunks found.")
 
