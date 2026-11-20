@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime, timezone
 
@@ -277,13 +277,39 @@ class ChatbotThemeConfig(BaseModel):
     greeting_delay: int = Field(default=3, ge=0, le=60)
     greeting_auto_hide: int = Field(default=10, ge=0, le=120)
 
-    # 5. Sizing & Position Offsets
-    desktop_bottom_offset: int = Field(default=24, ge=0, le=200)
-    desktop_side_offset: int = Field(default=24, ge=0, le=200)
+    # 5. Position & Placement Settings
+    position_preset: Literal[
+        "bottom_right",
+        "bottom_right_elevated",
+        "middle_right",
+        "top_right",
+        "bottom_left",
+        "custom",
+    ] = "bottom_right"
+    vertical_position: Literal["bottom", "top", "middle"] = "bottom"
+    desktop_top_offset: int = Field(default=24, ge=0, le=300)
+    desktop_left_offset: int = Field(default=24, ge=0, le=300)
+    desktop_right_offset: int = Field(default=24, ge=0, le=300)
+    desktop_bottom_offset: int = Field(default=24, ge=0, le=300)
+    desktop_side_offset: int = Field(default=24, ge=0, le=300)
+
+    # Responsive Mobile Configuration
+    mobile_position_preset: Literal[
+        "bottom_right",
+        "bottom_right_elevated",
+        "middle_right",
+        "top_right",
+        "bottom_left",
+        "custom",
+    ] = "bottom_right"
+    mobile_vertical_position: Literal["bottom", "top", "middle"] = "bottom"
     mobile_launcher_size: Literal["small", "medium", "large", "xlarge"] = "medium"
     mobile_position: Literal["right", "left"] = "right"
-    mobile_bottom_offset: int = Field(default=16, ge=0, le=100)
-    mobile_side_offset: int = Field(default=16, ge=0, le=100)
+    mobile_top_offset: int = Field(default=16, ge=0, le=200)
+    mobile_left_offset: int = Field(default=16, ge=0, le=200)
+    mobile_right_offset: int = Field(default=16, ge=0, le=200)
+    mobile_bottom_offset: int = Field(default=16, ge=0, le=200)
+    mobile_side_offset: int = Field(default=16, ge=0, le=200)
 
     # 6. Built-in Character Gallery Selection
     selected_character_id: Optional[str] = Field(default=None, max_length=60)
@@ -349,6 +375,33 @@ class ChatbotThemeConfig(BaseModel):
     def strip_cta_label(cls, v: Any) -> str:
         val = str(v or "").strip()
         return val or "Request Callback"
+
+    @model_validator(mode="after")
+    def sync_position_offsets(self):
+        # Sync desktop side offsets
+        if self.desktop_side_offset != 24:
+            if self.widget_position == "left" and self.desktop_left_offset == 24:
+                self.desktop_left_offset = self.desktop_side_offset
+            elif self.widget_position == "right" and self.desktop_right_offset == 24:
+                self.desktop_right_offset = self.desktop_side_offset
+        else:
+            if self.widget_position == "left":
+                self.desktop_side_offset = self.desktop_left_offset
+            else:
+                self.desktop_side_offset = self.desktop_right_offset
+
+        # Sync mobile side offsets
+        if self.mobile_side_offset != 16:
+            if self.mobile_position == "left" and self.mobile_left_offset == 16:
+                self.mobile_left_offset = self.mobile_side_offset
+            elif self.mobile_position == "right" and self.mobile_right_offset == 16:
+                self.mobile_right_offset = self.mobile_side_offset
+        else:
+            if self.mobile_position == "left":
+                self.mobile_side_offset = self.mobile_left_offset
+            else:
+                self.mobile_side_offset = self.mobile_right_offset
+        return self
 
 
 class WidgetAssetUploadResponse(BaseModel):
