@@ -510,3 +510,169 @@ class AuditLogResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ============================================================================
+# Agent Studio Schemas
+# ============================================================================
+
+class SuggestedQuestionItem(BaseModel):
+    id: str
+    text: str
+    enabled: bool = True
+
+
+class AgentBehaviourConfig(BaseModel):
+    ask_followup_questions: bool = True
+    suggest_services: bool = True
+    proactive_guidance: bool = True
+    collect_customer_info: bool = True
+    offer_human_assistance: bool = True
+    ask_clarification: bool = True
+    avoid_repetition: bool = True
+    recommend_services: bool = True
+    confirm_before_enquiry: bool = True
+    escalate_issues: bool = True
+    fallback_action: str = Field("acknowledge", pattern="^(acknowledge|offer_human|collect_details|suggest_contact)$")
+    custom_behaviour_instructions: Optional[str] = None
+
+
+class AgentWelcomeConfig(BaseModel):
+    welcome_message: str = "Hello! Welcome to our support desk. How can I help you today?"
+    agent_intro: str = "I'm your virtual assistant."
+    greeting_style: str = Field("Friendly", pattern="^(Friendly|Professional|Casual|Personalized)$")
+    initial_behaviour: str = Field(
+        "welcome_and_suggestions",
+        pattern="^(welcome_only|welcome_and_suggestions|ask_assistance|predefined_question)$",
+    )
+    predefined_question: Optional[str] = None
+    suggested_questions: List[SuggestedQuestionItem] = Field(default_factory=list)
+
+
+class AgentResponseConfig(BaseModel):
+    custom_response_instructions: Optional[str] = None
+    max_response_length: str = Field("standard", pattern="^(concise|standard|detailed)$")
+    prioritize_org_knowledge: bool = True
+    dont_invent_info: bool = True
+    display_sources: bool = True
+    acknowledge_unavailable: bool = True
+    followup_strategy: str = Field(
+        "one_at_a_time",
+        pattern="^(one_at_a_time|multiple_together|avoid_unnecessary|confirm_before_enquiry)$",
+    )
+    fallback_message: str = "I'm sorry, I don't have that information at the moment. Would you like me to connect you with our team?"
+
+
+class ConversationFlowStep(BaseModel):
+    id: str
+    title: str
+    description: str
+    step_type: str = "step"
+    enabled: bool = True
+
+
+class ConversationFlowConfig(BaseModel):
+    enable_welcome: bool = True
+    enable_requirement_triage: bool = True
+    enable_service_explanation: bool = True
+    enable_detail_collection: bool = True
+    enable_enquiry_creation: bool = True
+    enable_human_escalation: bool = True
+    completion_message: Optional[str] = "Thank you! Our team has received your enquiry and will get in touch shortly."
+    steps: List[ConversationFlowStep] = Field(default_factory=list)
+
+
+class AgentSettingsResponse(BaseModel):
+    id: str
+    organization_id: str
+    agent_name: str
+    agent_role: str
+    agent_description: str
+    organization_name: str
+    primary_responsibility: Optional[str] = None
+    personality: List[str]
+    tone: str
+    attitude: str
+    response_length: str
+    communication_style: str
+    formality: str
+    emoji_usage: str
+    language_preference: str
+    custom_instructions: Optional[str] = None
+    behaviour_config: AgentBehaviourConfig
+    welcome_config: AgentWelcomeConfig
+    response_config: AgentResponseConfig
+    is_active: bool
+    has_draft_changes: bool = False
+    last_activated_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    @field_serializer("last_activated_at", "created_at", "updated_at")
+    def serialize_agent_dates(self, v: Optional[datetime]):
+        return _serialize_utc(v)
+
+
+class AgentSettingsUpdate(BaseModel):
+    agent_name: Optional[str] = Field(None, min_length=1, max_length=120)
+    agent_role: Optional[str] = Field(None, min_length=1, max_length=150)
+    agent_description: Optional[str] = Field(None, min_length=1, max_length=2000)
+    organization_name: Optional[str] = Field(None, min_length=1, max_length=200)
+    primary_responsibility: Optional[str] = Field(None, max_length=500)
+    personality: Optional[List[str]] = None
+    tone: Optional[str] = None
+    attitude: Optional[str] = None
+    response_length: Optional[str] = Field(None, pattern="^(short|balanced|detailed)$")
+    communication_style: Optional[str] = None
+    formality: Optional[str] = Field(None, pattern="^(casual|semi-formal|formal)$")
+    emoji_usage: Optional[str] = Field(None, pattern="^(disabled|minimal|moderate)$")
+    language_preference: Optional[str] = None
+    custom_instructions: Optional[str] = None
+    behaviour_config: Optional[AgentBehaviourConfig] = None
+    welcome_config: Optional[AgentWelcomeConfig] = None
+    response_config: Optional[AgentResponseConfig] = None
+
+
+class AgentPreviewRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=2000)
+    conversation_history: List[Dict[str, str]] = Field(default_factory=list)
+    language: Optional[str] = "Auto"
+    draft_settings: Optional[AgentSettingsUpdate] = None
+
+
+class AgentPreviewResponse(BaseModel):
+    message: str
+    intent: str
+    sources: List[SourceCitation] = []
+    requires_followup: bool = False
+    suggested_queries: List[str] = []
+    language: str = "English"
+
+
+class ConversationFlowResponse(BaseModel):
+    id: str
+    organization_id: str
+    flow_name: str
+    flow_type: str
+    flow_config: ConversationFlowConfig
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    @field_serializer("created_at", "updated_at")
+    def serialize_flow_dates(self, v: datetime):
+        return _serialize_utc(v)
+
+
+class ConversationFlowCreate(BaseModel):
+    flow_name: str = Field(..., min_length=2, max_length=120)
+    flow_type: str = Field("default", min_length=2, max_length=50)
+    flow_config: ConversationFlowConfig
+    is_active: bool = True
+
+
+class ConversationFlowUpdate(BaseModel):
+    flow_name: Optional[str] = Field(None, min_length=2, max_length=120)
+    flow_type: Optional[str] = Field(None, min_length=2, max_length=50)
+    flow_config: Optional[ConversationFlowConfig] = None
+    is_active: Optional[bool] = None

@@ -12,7 +12,7 @@ load_dotenv()
 from migrations import run_migrations  # noqa: E402
 from models import ChatbotSetting, KnowledgeDocument, Organization  # noqa: E402
 from database import SessionLocal  # noqa: E402
-from routes import auth, chat, client_settings, conversations, dashboard, enquiries, knowledge, super_admin  # noqa: E402
+from routes import agent, auth, chat, client_settings, conversations, dashboard, enquiries, knowledge, super_admin  # noqa: E402
 from services.rag import rag_service  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -197,6 +197,7 @@ else:
 app.include_router(auth.router)
 app.include_router(super_admin.router)
 app.include_router(client_settings.router)
+app.include_router(agent.router)
 app.include_router(chat.router)
 app.include_router(conversations.router)
 app.include_router(enquiries.router)

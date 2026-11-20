@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from database import SessionLocal, get_db
-from models import Conversation, Enquiry, Message, utc_now
+from models import AgentSetting, Conversation, ConversationFlow, Enquiry, Message, utc_now
 from schemas import ChatRequest, ChatResponse, PublicChatbotConfig, SourceCitation
 from services.gemini import detect_intent, extract_lead_info, gemini_service, generate_suggested_queries
 from services.rag import rag_service
@@ -172,6 +172,35 @@ def handle_chat(
         collection_name=setting.knowledge_collection,
     )
 
+    # Check for active Agent Studio configuration and Conversation Flow
+    active_agent_cfg = None
+    agent_setting = (
+        db.query(AgentSetting)
+        .filter(AgentSetting.organization_id == org.id, AgentSetting.is_active == True)
+        .first()
+    )
+    if agent_setting and agent_setting.published_config_json:
+        try:
+            active_agent_cfg = json.loads(agent_setting.published_config_json)
+        except Exception:
+            active_agent_cfg = None
+
+    active_flow_cfg = None
+    active_flow = (
+        db.query(ConversationFlow)
+        .filter(ConversationFlow.organization_id == org.id, ConversationFlow.is_active == True)
+        .first()
+    )
+    if active_flow and active_flow.flow_config_json:
+        try:
+            active_flow_cfg = json.loads(active_flow.flow_config_json)
+        except Exception:
+            active_flow_cfg = None
+
+    effective_assistant_name = (
+        active_agent_cfg.get("agent_name") if active_agent_cfg else None
+    ) or setting.assistant_name
+
     token_usage = {}
     ai_response_text, intent, requires_followup = gemini_service.generate_chat_response(
         user_message=message_text,
@@ -180,9 +209,11 @@ def handle_chat(
         language=language,
         organization_name=org.name,
         organization_slug=org.slug,
-        assistant_name=setting.assistant_name,
+        assistant_name=effective_assistant_name,
         custom_instructions=setting.custom_instructions,
         usage_out=token_usage,
+        agent_config=active_agent_cfg,
+        flow_config=active_flow_cfg,
     )
 
     if conversation.category in ("general", None) and intent != "general":
@@ -305,12 +336,39 @@ def handle_chat_stream(payload: ChatRequest, request: Request):
         db.add(user_msg)
         db.commit()
 
+        # Check for active Agent Studio configuration and Conversation Flow
+        active_agent_cfg = None
+        agent_setting = (
+            db.query(AgentSetting)
+            .filter(AgentSetting.organization_id == org.id, AgentSetting.is_active == True)
+            .first()
+        )
+        if agent_setting and agent_setting.published_config_json:
+            try:
+                active_agent_cfg = json.loads(agent_setting.published_config_json)
+            except Exception:
+                active_agent_cfg = None
+
+        active_flow_cfg = None
+        active_flow = (
+            db.query(ConversationFlow)
+            .filter(ConversationFlow.organization_id == org.id, ConversationFlow.is_active == True)
+            .first()
+        )
+        if active_flow and active_flow.flow_config_json:
+            try:
+                active_flow_cfg = json.loads(active_flow.flow_config_json)
+            except Exception:
+                active_flow_cfg = None
+
         conv_id = conversation.id
         conv_category = conversation.category
         org_id = org.id
         org_name = org.name
         org_slug = org.slug
-        assistant_name = setting.assistant_name
+        assistant_name = (
+            active_agent_cfg.get("agent_name") if active_agent_cfg else None
+        ) or setting.assistant_name
         custom_instructions = setting.custom_instructions
     finally:
         db.close()
@@ -342,6 +400,8 @@ def handle_chat_stream(payload: ChatRequest, request: Request):
                 assistant_name=assistant_name,
                 custom_instructions=custom_instructions,
                 usage_out=token_usage,
+                agent_config=active_agent_cfg,
+                flow_config=active_flow_cfg,
             ):
                 assembled_chunks.append(token)
                 chunk_payload = json.dumps({"type": "chunk", "text": token})

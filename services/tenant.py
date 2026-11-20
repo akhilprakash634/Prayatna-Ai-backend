@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from models import (
     AccountSetupToken,
+    AgentSetting,
     ChatbotSetting,
     Conversation,
     Enquiry,
@@ -428,19 +429,47 @@ def get_public_chatbot_metadata(db: Session, chatbot_id: Optional[str] = None) -
             f"{org.name}'s support assistant is currently unavailable. Please contact the organization directly."
         )
 
+    bot_name = setting.bot_name
+    assistant_name = setting.assistant_name
+    welcome_message = setting.welcome_message
+    theme_cfg = resolve_chatbot_theme_config(org, setting)
+
+    # If active Agent Studio settings exist, overlay active agent metadata
+    agent_setting = (
+        db.query(AgentSetting)
+        .filter(AgentSetting.organization_id == org.id, AgentSetting.is_active == True)
+        .first()
+    )
+    if agent_setting and agent_setting.published_config_json:
+        try:
+            pub = json.loads(agent_setting.published_config_json)
+            if pub.get("agent_name"):
+                assistant_name = pub["agent_name"]
+            wel = pub.get("welcome_config") or {}
+            if wel.get("welcome_message"):
+                welcome_message = wel["welcome_message"]
+            if wel.get("suggested_questions"):
+                active_starters = [
+                    q["text"] for q in wel["suggested_questions"] if q.get("enabled", True) and q.get("text")
+                ]
+                if active_starters:
+                    theme_cfg["starter_prompts"] = active_starters
+        except Exception:
+            pass
+
     return {
         "chatbot_id": setting.chatbot_id,
         "organization_name": org.name,
         "organization_slug": org.slug,
-        "bot_name": setting.bot_name,
-        "assistant_name": setting.assistant_name,
-        "welcome_message": setting.welcome_message,
+        "bot_name": bot_name,
+        "assistant_name": assistant_name,
+        "welcome_message": welcome_message,
         "primary_color": setting.primary_color,
         "logo_url": setting.logo_url or org.logo_url,
         "website": org.website,
         "phone": org.phone,
         "is_available": is_available,
         "unavailable_reason": unavailable_reason,
-        "theme_config": resolve_chatbot_theme_config(org, setting),
+        "theme_config": theme_cfg,
     }
 

@@ -35,6 +35,8 @@ class Organization(Base):
     enquiries = relationship("Enquiry", back_populates="organization", cascade="all, delete-orphan")
     knowledge_documents = relationship("KnowledgeDocument", back_populates="organization", cascade="all, delete-orphan")
     usage_logs = relationship("UsageLog", back_populates="organization", cascade="all, delete-orphan")
+    agent_setting = relationship("AgentSetting", back_populates="organization", uselist=False, cascade="all, delete-orphan")
+    conversation_flows = relationship("ConversationFlow", back_populates="organization", cascade="all, delete-orphan")
 
 
 class User(Base):
@@ -206,3 +208,47 @@ class KnowledgeDocument(Base):
     created_at = Column(DateTime, default=utc_now)
 
     organization = relationship("Organization", back_populates="knowledge_documents")
+
+
+class AgentSetting(Base):
+    __tablename__ = "agent_settings"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    organization_id = Column(String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    agent_name = Column(String(120), nullable=False, default="Sarah")
+    agent_role = Column(String(150), nullable=False, default="Customer Support Assistant")
+    agent_description = Column(Text, nullable=False, default="You are a friendly and professional virtual assistant.")
+    personality = Column(Text, nullable=False, default='["Friendly", "Professional", "Empathetic"]')
+    tone = Column(String(50), nullable=False, default="Friendly")
+    attitude = Column(String(50), nullable=False, default="Helpful")
+    response_length = Column(String(30), nullable=False, default="balanced")  # short, balanced, detailed
+    communication_style = Column(String(50), nullable=False, default="conversational")  # conversational, direct, explanatory, professional, simple
+    formality = Column(String(30), nullable=False, default="semi-formal")  # casual, semi-formal, formal
+    emoji_usage = Column(String(30), nullable=False, default="minimal")  # disabled, minimal, moderate
+    language_preference = Column(String(50), nullable=False, default="Auto")  # Auto, English, Malayalam, Hindi, Custom
+    custom_instructions = Column(Text, nullable=True)
+    behaviour_config_json = Column(Text, nullable=True)
+    welcome_config_json = Column(Text, nullable=True)
+    response_config_json = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=False)
+    published_config_json = Column(Text, nullable=True)
+    last_activated_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
+
+    organization = relationship("Organization", back_populates="agent_setting")
+
+
+class ConversationFlow(Base):
+    __tablename__ = "conversation_flows"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    organization_id = Column(String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    flow_name = Column(String(120), nullable=False)
+    flow_type = Column(String(50), nullable=False, default="default")
+    flow_config_json = Column(Text, nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
+
+    organization = relationship("Organization", back_populates="conversation_flows")
