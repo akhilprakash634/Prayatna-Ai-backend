@@ -466,6 +466,20 @@ class GeminiService:
 
         custom_pers_str = f"- Special Instructions: {custom_instructions.strip()}\n" if custom_instructions.strip() else ""
 
+        wel_cfg = agent_config.get("welcome_config") or {}
+        wel_msg = (wel_cfg.get("welcome_message") or "").strip()
+        agent_intro = (wel_cfg.get("agent_intro") or "").strip()
+        wel_greeting_style = wel_cfg.get("greeting_style") or "Friendly"
+        wel_str = ""
+        if wel_msg:
+            wel_str = (
+                f"- Greeting & Welcome ({wel_greeting_style}): When a visitor sends an opening greeting (e.g. 'hi', 'hello', 'hey', 'good morning', etc.), "
+                f"greet them warmly as {agent_name}. Reflect your configured welcome message: \"{wel_msg}\""
+            )
+            if agent_intro:
+                wel_str += f" Introduce yourself as: \"{agent_intro}\""
+            wel_str += ". Do NOT dump unrelated therapy, service, or policy paragraphs on a simple hello.\n"
+
         layer_4 = (
             f"=== LAYER 4: AGENT IDENTITY & CHARACTER ===\n"
             f"- Agent Name: {agent_name}\n"
@@ -477,6 +491,7 @@ class GeminiService:
             f"- Formality: {formality_rule}\n"
             f"- Communication Style: {style_rule}\n"
             f"- Emoji Usage: {emoji_rule}\n"
+            f"{wel_str}"
             f"{custom_pers_str}"
         )
 

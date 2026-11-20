@@ -283,18 +283,22 @@ def activate_agent(
         if wel_cfg.get("welcome_message"):
             chatbot_setting.welcome_message = wel_cfg["welcome_message"]
 
-        # Sync starter prompts
-        if wel_cfg.get("suggested_questions"):
+        # Sync starter prompts respecting initial_behaviour mode
+        init_mode = wel_cfg.get("initial_behaviour", "welcome_and_suggestions")
+        try:
+            theme_dict = json.loads(chatbot_setting.theme_config_json or "{}")
+        except Exception:
+            theme_dict = {}
+
+        if init_mode == "welcome_only":
+            theme_dict["starter_prompts"] = []
+            chatbot_setting.theme_config_json = json.dumps(theme_dict)
+        elif wel_cfg.get("suggested_questions") is not None:
             active_starters = [
                 q["text"] for q in wel_cfg["suggested_questions"] if q.get("enabled", True) and q.get("text")
             ]
-            if active_starters:
-                try:
-                    theme_dict = json.loads(chatbot_setting.theme_config_json or "{}")
-                except Exception:
-                    theme_dict = {}
-                theme_dict["starter_prompts"] = active_starters
-                chatbot_setting.theme_config_json = json.dumps(theme_dict)
+            theme_dict["starter_prompts"] = active_starters
+            chatbot_setting.theme_config_json = json.dumps(theme_dict)
 
     db.commit()
     db.refresh(setting)

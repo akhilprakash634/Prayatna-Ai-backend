@@ -448,12 +448,14 @@ def get_public_chatbot_metadata(db: Session, chatbot_id: Optional[str] = None) -
             wel = pub.get("welcome_config") or {}
             if wel.get("welcome_message"):
                 welcome_message = wel["welcome_message"]
-            if wel.get("suggested_questions"):
+            init_mode = wel.get("initial_behaviour", "welcome_and_suggestions")
+            if init_mode == "welcome_only":
+                theme_cfg["starter_prompts"] = []
+            elif wel.get("suggested_questions") is not None:
                 active_starters = [
                     q["text"] for q in wel["suggested_questions"] if q.get("enabled", True) and q.get("text")
                 ]
-                if active_starters:
-                    theme_cfg["starter_prompts"] = active_starters
+                theme_cfg["starter_prompts"] = active_starters
         except Exception:
             pass
 
