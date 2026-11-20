@@ -440,6 +440,24 @@ def create_chatty_bubble():
         ]
     }
 
+def ensure_keyframes(obj):
+    if not isinstance(obj, (dict, list)):
+        return
+    if isinstance(obj, dict):
+        if obj.get("a") == 1 and isinstance(obj.get("k"), list):
+            for kf in obj["k"]:
+                if isinstance(kf, dict):
+                    if "i" not in kf:
+                        kf["i"] = {"x": [0.833], "y": [0.833]}
+                    if "o" not in kf:
+                        kf["o"] = {"x": [0.167], "y": [0.167]}
+        for v in obj.values():
+            ensure_keyframes(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            ensure_keyframes(item)
+
+
 def main():
     target_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../frontend/public/animations"))
     os.makedirs(target_dir, exist_ok=True)
@@ -451,6 +469,7 @@ def main():
     }
     
     for filename, data in presets.items():
+        ensure_keyframes(data)
         path = os.path.join(target_dir, filename)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)

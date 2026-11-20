@@ -653,6 +653,24 @@ CHARACTER_GENERATORS = {
     "floating-mascot": create_floating_mascot,
 }
 
+def ensure_keyframes(obj):
+    if not isinstance(obj, (dict, list)):
+        return
+    if isinstance(obj, dict):
+        if obj.get("a") == 1 and isinstance(obj.get("k"), list):
+            for kf in obj["k"]:
+                if isinstance(kf, dict):
+                    if "i" not in kf:
+                        kf["i"] = {"x": [0.833], "y": [0.833]}
+                    if "o" not in kf:
+                        kf["o"] = {"x": [0.167], "y": [0.167]}
+        for v in obj.values():
+            ensure_keyframes(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            ensure_keyframes(item)
+
+
 def main():
     backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "widget_assets", "characters"))
     frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "public", "characters"))
@@ -662,6 +680,7 @@ def main():
     
     for char_id, gen_fn in CHARACTER_GENERATORS.items():
         data = gen_fn()
+        ensure_keyframes(data)
         filename = f"{char_id}.json"
         
         b_path = os.path.join(backend_dir, filename)
