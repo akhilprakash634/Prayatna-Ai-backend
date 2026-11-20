@@ -11,7 +11,8 @@ load_dotenv()
 
 from migrations import run_migrations  # noqa: E402
 from models import ChatbotSetting, KnowledgeDocument, Organization  # noqa: E402
-from database import SessionLocal  # noqa: E402
+from fastapi.staticfiles import StaticFiles
+from database import DATA_DIR, SessionLocal  # noqa: E402
 from routes import agent, auth, chat, client_settings, conversations, dashboard, enquiries, knowledge, super_admin  # noqa: E402
 from services.rag import rag_service  # noqa: E402
 
@@ -192,6 +193,11 @@ else:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+# Mount static widget assets
+widget_assets_dir = os.path.join(DATA_DIR, "widget_assets")
+os.makedirs(widget_assets_dir, exist_ok=True)
+app.mount("/api/widget/assets", StaticFiles(directory=widget_assets_dir), name="widget_assets")
 
 # Attach API routers
 app.include_router(auth.router)

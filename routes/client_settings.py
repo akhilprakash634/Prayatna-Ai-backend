@@ -1,7 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+import json
+import os
+import uuid
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from sqlalchemy.orm import Session
 
-from database import get_db
+from database import DATA_DIR, get_db
 from models import ChatbotSetting, Organization, Subscription
 from schemas import (
     ChatbotConfigResponse,
@@ -11,6 +16,8 @@ from schemas import (
     ProfileUpdateRequest,
     SubscriptionResponse,
     UsageSummaryResponse,
+    WidgetAssetUploadResponse,
+    WidgetPresetItem,
 )
 from services.security import (
     AuthContext,
@@ -88,6 +95,143 @@ def update_chatbot_config(
     db.commit()
     db.refresh(setting)
     return _to_chatbot_response(ctx.organization, setting)
+
+
+CURATED_WIDGET_PRESETS = [
+    WidgetPresetItem(
+        id="friendly_robot",
+        name="Friendly Robot",
+        description="Charming animated AI robot with glowing eyes and breathing tilt.",
+        type="lottie",
+        preview_url="/animations/friendly-robot.json",
+        animation_url="/animations/friendly-robot.json",
+        category="Characters",
+    ),
+    WidgetPresetItem(
+        id="ai_sparkle",
+        name="AI Sparkle",
+        description="Modern glowing AI star with smooth rotation and pulsing glow.",
+        type="lottie",
+        preview_url="/animations/ai-sparkle.json",
+        animation_url="/animations/ai-sparkle.json",
+        category="Abstract",
+    ),
+    WidgetPresetItem(
+        id="chatty_bubble",
+        name="Chatty Bubble",
+        description="Expressive floating speech bubble with animated typing dots.",
+        type="lottie",
+        preview_url="/animations/chatty-bubble.json",
+        animation_url="/animations/chatty-bubble.json",
+        category="Conversational",
+    ),
+]
+
+ALLOWED_ASSET_EXTENSIONS = {
+    ".json": "lottie",
+    ".lottie": "lottie",
+    ".gif": "gif",
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".webp": "image",
+    ".svg": "image",
+    ".webm": "webm",
+}
+
+MAX_ASSET_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+def sanitize_asset_filename(filename: str) -> str:
+    """Sanitize uploaded widget asset filename and validate allowed extension."""
+    import re
+    basename = os.path.basename(filename)
+    cleaned = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", basename)
+    name, ext = os.path.splitext(cleaned)
+    ext_lower = ext.lower()
+    if ext_lower not in ALLOWED_ASSET_EXTENSIONS:
+        allowed = ", ".join(sorted(ALLOWED_ASSET_EXTENSIONS.keys()))
+        raise ValueError(f"Unsupported file format '{ext}'. Allowed formats: {allowed}")
+    return cleaned
+
+
+@router.get("/widget/presets", response_model=List[WidgetPresetItem])
+def get_widget_presets(ctx: AuthContext = Depends(require_client_admin)):
+    """Return curated animated character and avatar presets."""
+    return CURATED_WIDGET_PRESETS
+
+
+@router.post("/widget/upload-asset", response_model=WidgetAssetUploadResponse)
+async def upload_widget_asset(
+    file: UploadFile = File(...),
+    ctx: AuthContext = Depends(require_client_admin),
+):
+    """Upload custom animation (Lottie JSON / GIF / WebM) or static avatar image with validation."""
+    if not file.filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No file selected.")
+
+    try:
+        clean_name = sanitize_asset_filename(file.filename)
+    except ValueError as ve:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+
+    ext = os.path.splitext(clean_name)[1].lower()
+    if ext not in ALLOWED_ASSET_EXTENSIONS:
+        allowed = ", ".join(sorted(ALLOWED_ASSET_EXTENSIONS.keys()))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported file format '{ext}'. Allowed formats: {allowed}",
+        )
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty.")
+
+    if len(file_bytes) > MAX_ASSET_SIZE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File exceeds maximum allowed size of 5MB (size: {len(file_bytes)} bytes).",
+        )
+
+    asset_type = ALLOWED_ASSET_EXTENSIONS[ext]
+
+    # Content structure validation
+    if ext in (".json", ".lottie"):
+        try:
+            parsed = json.loads(file_bytes.decode("utf-8"))
+            if not isinstance(parsed, dict):
+                raise ValueError("Lottie JSON must be a JSON object.")
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid Lottie JSON file: {e}",
+            )
+    elif ext == ".gif":
+        if not (file_bytes.startswith(b"GIF87a") or file_bytes.startswith(b"GIF89a")):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid GIF file format header.",
+            )
+
+    # Isolated per-org asset directory
+    org_folder = os.path.join(DATA_DIR, "widget_assets", ctx.organization_id)
+    os.makedirs(org_folder, exist_ok=True)
+
+    unique_token = uuid.uuid4().hex[:8]
+    stored_filename = f"{unique_token}_{clean_name}"
+    file_path = os.path.join(org_folder, stored_filename)
+
+    with open(file_path, "wb") as f:
+        f.write(file_bytes)
+
+    public_url = f"/api/widget/assets/{ctx.organization_id}/{stored_filename}"
+
+    return WidgetAssetUploadResponse(
+        url=public_url,
+        filename=clean_name,
+        size=len(file_bytes),
+        asset_type=asset_type,
+    )
 
 
 @router.get("/account")

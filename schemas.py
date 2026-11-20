@@ -250,6 +250,41 @@ class ChatbotThemeConfig(BaseModel):
     launcher_label: Optional[str] = Field(default=None, max_length=32)
     show_powered_by: bool = True
 
+    # 1. Widget Appearance & Launcher Styling
+    launcher_style: Literal["default", "custom_image", "animated"] = "default"
+    launcher_bg_color: Optional[str] = Field(default=None, max_length=9)
+    launcher_icon_color: str = Field(default="#ffffff", max_length=9)
+    launcher_size: Literal["small", "medium", "large", "xlarge"] = "medium"
+    launcher_shape: Literal["circle", "rounded_square", "pill"] = "circle"
+
+    # 2. Avatar / Character Animation Assets
+    avatar_type: Literal["default", "custom_image", "gif", "lottie", "webm"] = "default"
+    avatar_url: Optional[str] = Field(default=None, max_length=600)
+    avatar_animation_url: Optional[str] = Field(default=None, max_length=600)
+    avatar_preset: Optional[str] = Field(default=None, max_length=60)
+    character_size: Literal["contain", "large", "overflow"] = "contain"
+
+    # 3. Animation Behavior
+    animation_enabled: bool = True
+    animation_behavior: Literal["idle", "greeting", "hover", "click", "continuous"] = "continuous"
+    reduced_motion: Literal["respect", "force_static", "always_animate"] = "respect"
+
+    # 4. Greeting Tooltip
+    greeting_enabled: bool = False
+    greeting_text: Optional[str] = Field(default=None, max_length=160)
+    greeting_bg_color: str = Field(default="#ffffff", max_length=9)
+    greeting_text_color: str = Field(default="#0f172a", max_length=9)
+    greeting_delay: int = Field(default=3, ge=0, le=60)
+    greeting_auto_hide: int = Field(default=10, ge=0, le=120)
+
+    # 5. Sizing & Position Offsets
+    desktop_bottom_offset: int = Field(default=24, ge=0, le=200)
+    desktop_side_offset: int = Field(default=24, ge=0, le=200)
+    mobile_launcher_size: Literal["small", "medium", "large", "xlarge"] = "medium"
+    mobile_position: Literal["right", "left"] = "right"
+    mobile_bottom_offset: int = Field(default=16, ge=0, le=100)
+    mobile_side_offset: int = Field(default=16, ge=0, le=100)
+
     @field_validator("starter_prompts", mode="before")
     @classmethod
     def normalize_starter_prompts(cls, v: Any) -> List[str]:
@@ -266,7 +301,7 @@ class ChatbotThemeConfig(BaseModel):
                 break
         return cleaned
 
-    @field_validator("tagline", "launcher_label", mode="before")
+    @field_validator("tagline", "launcher_label", "greeting_text", "avatar_preset", mode="before")
     @classmethod
     def strip_optional_text(cls, v: Any) -> Optional[str]:
         if v is None:
@@ -274,11 +309,56 @@ class ChatbotThemeConfig(BaseModel):
         val = str(v).strip()
         return val or None
 
+    @field_validator("launcher_bg_color", "launcher_icon_color", "greeting_bg_color", "greeting_text_color", mode="before")
+    @classmethod
+    def validate_hex_or_none(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        clean = str(v).strip().lower()
+        if not clean:
+            return None
+        import re
+        if not re.match(r"^#[0-9a-f]{6}$", clean):
+            raise ValueError(f"Color '{v}' must be a valid 6-digit hex string (e.g. #4f46e5).")
+        return clean
+
+    @field_validator("avatar_url", "avatar_animation_url", mode="before")
+    @classmethod
+    def validate_asset_url(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        val = str(v).strip()
+        if not val:
+            return None
+        if val.startswith("/") and not val.startswith("//"):
+            return val
+        lower = val.lower()
+        if lower.startswith("https://") or lower.startswith("http://"):
+            return val
+        raise ValueError("Asset URL must start with https://, http://, or /.")
+
     @field_validator("enquiry_button_label", mode="before")
     @classmethod
     def strip_cta_label(cls, v: Any) -> str:
         val = str(v or "").strip()
         return val or "Request Callback"
+
+
+class WidgetAssetUploadResponse(BaseModel):
+    url: str
+    filename: str
+    size: int
+    asset_type: str
+
+
+class WidgetPresetItem(BaseModel):
+    id: str
+    name: str
+    description: str
+    type: Literal["lottie", "gif", "image"]
+    preview_url: str
+    animation_url: str
+    category: str
 
 
 class PublicChatbotConfig(BaseModel):
