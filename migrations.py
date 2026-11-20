@@ -232,6 +232,10 @@ def run_migrations() -> dict:
             target_collection_name=chatbot.knowledge_collection,
         )
 
+        # 9. Ensure built-in Animated Character Gallery is seeded
+        from services.character_registry import seed_character_gallery_if_needed
+        seeded_characters = seed_character_gallery_if_needed(db)
+
         return {
             "prayatna_org_id": prayatna_org.id,
             "chatbot_id": chatbot.chatbot_id,
@@ -240,6 +244,7 @@ def run_migrations() -> dict:
             "migrated_enquiries": migrated_enqs,
             "migrated_documents": migrated_docs,
             "migrated_vectors": migrated_vectors,
+            "seeded_characters": seeded_characters,
         }
     finally:
         db.close()

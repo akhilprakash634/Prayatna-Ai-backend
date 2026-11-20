@@ -252,3 +252,23 @@ class ConversationFlow(Base):
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     organization = relationship("Organization", back_populates="conversation_flows")
+
+
+class CharacterAsset(Base):
+    __tablename__ = "character_assets"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    character_id = Column(String(60), unique=True, nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    category = Column(String(50), nullable=False, index=True)  # friendly, professional, healthcare, education, minimal
+    description = Column(String(255), nullable=False)
+    preview_image = Column(String(500), nullable=True)
+    animation_url = Column(String(500), nullable=False)
+    animation_type = Column(String(30), nullable=False, default="lottie")  # lottie, gif, webm
+    supported_animations = Column(Text, nullable=True)  # JSON array string
+    default_size = Column(Integer, nullable=False, default=56)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    display_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
+

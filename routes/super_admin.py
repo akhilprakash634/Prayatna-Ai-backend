@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import (
     AuditLog,
+    CharacterAsset,
     ChatbotSetting,
     Conversation,
     Enquiry,
@@ -23,8 +24,10 @@ from models import (
 from schemas import (
     AdminUserBrief,
     AuditLogResponse,
+    CharacterAssetResponse,
     ChatbotConfigResponse,
     CreateClientResponse,
+    CreateCharacterAssetRequest,
     DeleteOrganizationRequest,
     OrganizationCreateRequest,
     OrganizationDetailResponse,
@@ -36,6 +39,7 @@ from schemas import (
     SubscriptionResponse,
     SubscriptionUpdateRequest,
     SuperAdminDashboardStats,
+    UpdateCharacterAssetRequest,
     UsageSummaryResponse,
 )
 from routes.auth import _build_session_response
@@ -692,4 +696,126 @@ def list_audit_logs(
     if organization_id:
         query = query.filter(AuditLog.target_organization_id == organization_id)
     return query.order_by(AuditLog.created_at.desc()).limit(limit).all()
+
+
+# --- Built-in Character Gallery Management ---
+
+@router.get("/characters", response_model=List[CharacterAssetResponse])
+def list_all_characters(
+    ctx: AuthContext = Depends(require_super_admin),
+    db: Session = Depends(get_db),
+):
+    """List all character assets (active and inactive) for Super Admin management."""
+    from services.character_registry import serialize_character_asset, seed_character_gallery_if_needed
+
+    seed_character_gallery_if_needed(db)
+    chars = db.query(CharacterAsset).order_by(CharacterAsset.display_order.asc(), CharacterAsset.name.asc()).all()
+    return [serialize_character_asset(c) for c in chars]
+
+
+@router.post("/characters", response_model=CharacterAssetResponse, status_code=status.HTTP_201_CREATED)
+def create_character(
+    payload: CreateCharacterAssetRequest,
+    ctx: AuthContext = Depends(require_super_admin),
+    db: Session = Depends(get_db),
+):
+    """Create a new character asset in the central gallery."""
+    import json
+    from services.character_registry import serialize_character_asset
+
+    existing = db.query(CharacterAsset).filter(CharacterAsset.character_id == payload.character_id).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Character with ID '{payload.character_id}' already exists.",
+        )
+
+    char = CharacterAsset(
+        character_id=payload.character_id,
+        name=payload.name,
+        category=payload.category.lower().strip(),
+        description=payload.description,
+        preview_image=payload.preview_image,
+        animation_url=payload.animation_url,
+        animation_type=payload.animation_type,
+        supported_animations=json.dumps(payload.supported_animations),
+        default_size=payload.default_size,
+        is_active=payload.is_active,
+        display_order=payload.display_order,
+    )
+    db.add(char)
+    db.commit()
+    db.refresh(char)
+    return serialize_character_asset(char)
+
+
+@router.patch("/characters/{character_id}", response_model=CharacterAssetResponse)
+def update_character(
+    character_id: str,
+    payload: UpdateCharacterAssetRequest,
+    ctx: AuthContext = Depends(require_super_admin),
+    db: Session = Depends(get_db),
+):
+    """Update details, active state, or display order for a character."""
+    import json
+    from services.character_registry import serialize_character_asset
+
+    char = db.query(CharacterAsset).filter(
+        (CharacterAsset.character_id == character_id) | (CharacterAsset.id == character_id)
+    ).first()
+    if not char:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Character not found.")
+
+    if payload.name is not None:
+        char.name = payload.name.strip()
+    if payload.category is not None:
+        char.category = payload.category.lower().strip()
+    if payload.description is not None:
+        char.description = payload.description.strip()
+    if payload.preview_image is not None:
+        char.preview_image = payload.preview_image.strip() or None
+    if payload.animation_url is not None:
+        char.animation_url = payload.animation_url.strip()
+    if payload.animation_type is not None:
+        char.animation_type = payload.animation_type
+    if payload.supported_animations is not None:
+        char.supported_animations = json.dumps(payload.supported_animations)
+    if payload.default_size is not None:
+        char.default_size = payload.default_size
+    if payload.is_active is not None:
+        char.is_active = payload.is_active
+    if payload.display_order is not None:
+        char.display_order = payload.display_order
+
+    db.commit()
+    db.refresh(char)
+    return serialize_character_asset(char)
+
+
+@router.delete("/characters/{character_id}", status_code=status.HTTP_200_OK)
+def delete_character(
+    character_id: str,
+    ctx: AuthContext = Depends(require_super_admin),
+    db: Session = Depends(get_db),
+):
+    """Delete a character if not actively assigned to any organization's chatbot theme."""
+    char = db.query(CharacterAsset).filter(
+        (CharacterAsset.character_id == character_id) | (CharacterAsset.id == character_id)
+    ).first()
+    if not char:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Character not found.")
+
+    # Guard: check if any organization currently uses this character
+    settings = db.query(ChatbotSetting).all()
+    for s in settings:
+        if s.theme_config_json and char.character_id in s.theme_config_json:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot delete character '{char.name}' ({char.character_id}) as it is currently assigned to one or more active chatbot themes.",
+            )
+
+    db.delete(char)
+    db.commit()
+    return {"message": f"Character '{char.name}' deleted successfully."}
+
 

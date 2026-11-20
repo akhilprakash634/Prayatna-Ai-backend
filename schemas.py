@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime, timezone
 
@@ -285,6 +285,13 @@ class ChatbotThemeConfig(BaseModel):
     mobile_bottom_offset: int = Field(default=16, ge=0, le=100)
     mobile_side_offset: int = Field(default=16, ge=0, le=100)
 
+    # 6. Built-in Character Gallery Selection
+    selected_character_id: Optional[str] = Field(default=None, max_length=60)
+    selected_character_type: Optional[str] = Field(default=None, max_length=30)
+    selected_character_asset: Optional[str] = Field(default=None, max_length=600)
+    animation_speed: float = Field(default=1.0, ge=0.25, le=3.0)
+    character_settings: Optional[Dict[str, Any]] = None
+
     @field_validator("starter_prompts", mode="before")
     @classmethod
     def normalize_starter_prompts(cls, v: Any) -> List[str]:
@@ -301,7 +308,7 @@ class ChatbotThemeConfig(BaseModel):
                 break
         return cleaned
 
-    @field_validator("tagline", "launcher_label", "greeting_text", "avatar_preset", mode="before")
+    @field_validator("tagline", "launcher_label", "greeting_text", "avatar_preset", "selected_character_id", "selected_character_type", mode="before")
     @classmethod
     def strip_optional_text(cls, v: Any) -> Optional[str]:
         if v is None:
@@ -322,7 +329,7 @@ class ChatbotThemeConfig(BaseModel):
             raise ValueError(f"Color '{v}' must be a valid 6-digit hex string (e.g. #4f46e5).")
         return clean
 
-    @field_validator("avatar_url", "avatar_animation_url", mode="before")
+    @field_validator("avatar_url", "avatar_animation_url", "selected_character_asset", mode="before")
     @classmethod
     def validate_asset_url(cls, v: Any) -> Optional[str]:
         if v is None:
@@ -359,6 +366,53 @@ class WidgetPresetItem(BaseModel):
     preview_url: str
     animation_url: str
     category: str
+
+
+class CharacterAssetResponse(BaseModel):
+    id: str
+    character_id: str
+    name: str
+    category: str
+    description: str
+    preview_image: Optional[str] = None
+    animation_url: str
+    animation_type: str = "lottie"
+    supported_animations: List[str] = Field(default_factory=lambda: ["continuous", "idle", "greeting", "hover", "click"])
+    default_size: int = 56
+    is_active: bool = True
+    display_order: int = 0
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CreateCharacterAssetRequest(BaseModel):
+    character_id: str = Field(..., min_length=2, max_length=60)
+    name: str = Field(..., min_length=2, max_length=100)
+    category: str = Field(..., min_length=2, max_length=50)
+    description: str = Field(..., min_length=2, max_length=255)
+    preview_image: Optional[str] = Field(default=None, max_length=500)
+    animation_url: str = Field(..., min_length=1, max_length=500)
+    animation_type: Literal["lottie", "gif", "webm"] = "lottie"
+    supported_animations: List[str] = Field(default_factory=lambda: ["continuous", "idle", "greeting", "hover", "click"])
+    default_size: int = Field(default=56, ge=32, le=128)
+    is_active: bool = True
+    display_order: int = 0
+
+
+class UpdateCharacterAssetRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=2, max_length=100)
+    category: Optional[str] = Field(default=None, min_length=2, max_length=50)
+    description: Optional[str] = Field(default=None, min_length=2, max_length=255)
+    preview_image: Optional[str] = Field(default=None, max_length=500)
+    animation_url: Optional[str] = Field(default=None, min_length=1, max_length=500)
+    animation_type: Optional[Literal["lottie", "gif", "webm"]] = None
+    supported_animations: Optional[List[str]] = None
+    default_size: Optional[int] = Field(default=None, ge=32, le=128)
+    is_active: Optional[bool] = None
+    display_order: Optional[int] = None
+
 
 
 class PublicChatbotConfig(BaseModel):

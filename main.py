@@ -211,6 +211,31 @@ app.include_router(knowledge.router)
 app.include_router(dashboard.router)
 
 
+@app.get("/api/widget/characters", tags=["Widget"])
+def get_public_widget_characters(category: str = None, search: str = None):
+    """Public endpoint to list active character gallery assets."""
+    from database import SessionLocal
+    from models import CharacterAsset
+    from services.character_registry import serialize_character_asset, seed_character_gallery_if_needed
+
+    db = SessionLocal()
+    try:
+        seed_character_gallery_if_needed(db)
+        query = db.query(CharacterAsset).filter(CharacterAsset.is_active == True)
+        if category and category.lower() != "all":
+            query = query.filter(CharacterAsset.category == category.lower().strip())
+        if search:
+            s = f"%{search.strip().lower()}%"
+            query = query.filter(
+                (CharacterAsset.name.ilike(s)) | (CharacterAsset.description.ilike(s))
+            )
+        chars = query.order_by(CharacterAsset.display_order.asc(), CharacterAsset.name.asc()).all()
+        return [serialize_character_asset(c) for c in chars]
+    finally:
+        db.close()
+
+
+
 @app.get("/health", tags=["system"])
 def health_check():
     stats = rag_service.get_stats(org_slug="prayatna", collection_name="org_prayatna")

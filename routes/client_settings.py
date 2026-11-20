@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from database import DATA_DIR, get_db
 from models import ChatbotSetting, Organization, Subscription
 from schemas import (
+    CharacterAssetResponse,
     ChatbotConfigResponse,
     ChatbotConfigUpdate,
     ChatbotThemeConfig,
@@ -153,6 +154,30 @@ def sanitize_asset_filename(filename: str) -> str:
         allowed = ", ".join(sorted(ALLOWED_ASSET_EXTENSIONS.keys()))
         raise ValueError(f"Unsupported file format '{ext}'. Allowed formats: {allowed}")
     return cleaned
+
+
+@router.get("/widget/characters", response_model=List[CharacterAssetResponse])
+def get_admin_widget_characters(
+    category: Optional[str] = None,
+    search: Optional[str] = None,
+    ctx: AuthContext = Depends(require_client_admin),
+    db: Session = Depends(get_db),
+):
+    """Return active character gallery assets for client admin."""
+    from models import CharacterAsset
+    from services.character_registry import serialize_character_asset, seed_character_gallery_if_needed
+
+    seed_character_gallery_if_needed(db)
+    query = db.query(CharacterAsset).filter(CharacterAsset.is_active == True)
+    if category and category.lower() != "all":
+        query = query.filter(CharacterAsset.category == category.lower().strip())
+    if search:
+        s = f"%{search.strip().lower()}%"
+        query = query.filter(
+            (CharacterAsset.name.ilike(s)) | (CharacterAsset.description.ilike(s))
+        )
+    chars = query.order_by(CharacterAsset.display_order.asc(), CharacterAsset.name.asc()).all()
+    return [serialize_character_asset(c) for c in chars]
 
 
 @router.get("/widget/presets", response_model=List[WidgetPresetItem])
