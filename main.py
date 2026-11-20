@@ -189,8 +189,12 @@ os.makedirs(widget_assets_dir, exist_ok=True)
 app.mount("/api/widget/assets", StaticFiles(directory=widget_assets_dir), name="widget_assets")
 
 # Mount character animations directly at /characters so that both backend and frontend resolve /characters/*.json
-characters_dir = os.path.join(widget_assets_dir, "characters")
-os.makedirs(characters_dir, exist_ok=True)
+backend_characters_dir = os.path.join(os.path.dirname(__file__), "characters")
+if os.path.exists(backend_characters_dir):
+    characters_dir = backend_characters_dir
+else:
+    characters_dir = os.path.join(widget_assets_dir, "characters")
+    os.makedirs(characters_dir, exist_ok=True)
 app.mount("/characters", StaticFiles(directory=characters_dir), name="characters")
 
 # Attach API routers
