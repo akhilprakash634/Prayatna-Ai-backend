@@ -551,7 +551,7 @@ class AgentWelcomeConfig(BaseModel):
 
 class AgentResponseConfig(BaseModel):
     custom_response_instructions: Optional[str] = None
-    max_response_length: str = Field("standard", pattern="^(concise|standard|detailed)$")
+    max_response_length: str = Field("standard", pattern="^(concise|standard|detailed|short|balanced)$")
     prioritize_org_knowledge: bool = True
     dont_invent_info: bool = True
     display_sources: bool = True
@@ -622,7 +622,7 @@ class AgentSettingsUpdate(BaseModel):
     personality: Optional[List[str]] = None
     tone: Optional[str] = None
     attitude: Optional[str] = None
-    response_length: Optional[str] = Field(None, pattern="^(short|balanced|detailed)$")
+    response_length: Optional[str] = Field(None, pattern="^(short|balanced|detailed|concise|standard)$")
     communication_style: Optional[str] = None
     formality: Optional[str] = Field(None, pattern="^(casual|semi-formal|formal)$")
     emoji_usage: Optional[str] = Field(None, pattern="^(disabled|minimal|moderate)$")
