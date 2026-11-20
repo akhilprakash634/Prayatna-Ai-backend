@@ -173,31 +173,25 @@ app = FastAPI(
 )
 
 # CORS configuration:
-# Authenticated portal calls route through Next.js same-origin proxy (/api/*);
-# Explicit ALLOWED_ORIGINS allow credentialed CORS if configured; otherwise public embeds run uncredentialed.
-cors_origins_env = os.getenv("ALLOWED_ORIGINS") or os.getenv("FRONTEND_URL", "")
-if cors_origins_env and cors_origins_env.strip() != "*":
-    allowed_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=allowed_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-else:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+# Multi-tenant embed platform: widgets can be embedded on any customer origin (e.g. mindcognito.in).
+# Using allow_origin_regex=".*" ensures both credentialed admin calls and customer embed origins are allowed.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=".*",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Mount static widget assets
 widget_assets_dir = os.path.join(DATA_DIR, "widget_assets")
 os.makedirs(widget_assets_dir, exist_ok=True)
 app.mount("/api/widget/assets", StaticFiles(directory=widget_assets_dir), name="widget_assets")
+
+# Mount character animations directly at /characters so that both backend and frontend resolve /characters/*.json
+characters_dir = os.path.join(widget_assets_dir, "characters")
+os.makedirs(characters_dir, exist_ok=True)
+app.mount("/characters", StaticFiles(directory=characters_dir), name="characters")
 
 # Attach API routers
 app.include_router(auth.router)
