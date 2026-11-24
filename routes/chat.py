@@ -16,6 +16,7 @@ from services.tenant import (
     enforce_subscription_limits,
     get_public_chatbot_metadata,
     record_usage,
+    resolve_chatbot_theme_config,
     resolve_public_chatbot,
 )
 
@@ -263,7 +264,20 @@ def handle_chat(
     )
     db.commit()
 
-    suggested_queries = generate_suggested_queries(intent, language, organization_name=org.name)
+    theme_cfg = resolve_chatbot_theme_config(org, setting)
+    init_mode = theme_cfg.get("initial_behaviour", "welcome_and_suggestions")
+    suggestions_enabled = theme_cfg.get("suggested_questions_enabled", True)
+    if init_mode == "welcome_only" or not suggestions_enabled:
+        suggested_queries = []
+    else:
+        active_prompts = theme_cfg.get("starter_prompts")
+        suggested_queries = generate_suggested_queries(
+            intent,
+            language,
+            organization_name=org.name,
+            starter_prompts=active_prompts,
+            enable_suggestions=True,
+        )
 
     return ChatResponse(
         conversation_id=conversation.id,
@@ -451,7 +465,20 @@ def handle_chat_stream(payload: ChatRequest, request: Request):
             )
             stream_db.commit()
 
-            suggested_queries = generate_suggested_queries(intent, language, organization_name=org_name)
+            theme_cfg = resolve_chatbot_theme_config(org, chatbot_setting)
+            init_mode = theme_cfg.get("initial_behaviour", "welcome_and_suggestions")
+            suggestions_enabled = theme_cfg.get("suggested_questions_enabled", True)
+            if init_mode == "welcome_only" or not suggestions_enabled:
+                suggested_queries = []
+            else:
+                active_prompts = theme_cfg.get("starter_prompts")
+                suggested_queries = generate_suggested_queries(
+                    intent,
+                    language,
+                    organization_name=org_name,
+                    starter_prompts=active_prompts,
+                    enable_suggestions=True,
+                )
             done_payload = json.dumps(
                 {
                     "type": "done",

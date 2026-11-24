@@ -244,6 +244,7 @@ class ChatbotThemeConfig(BaseModel):
     font_family: Literal["inter", "plus_jakarta", "dm_sans", "system"] = "inter"
     tagline: Optional[str] = Field(default=None, max_length=120)
     starter_prompts: List[str] = Field(default_factory=list)
+    suggested_questions_enabled: bool = True
     enquiry_enabled: bool = True
     enquiry_button_label: str = Field(default="Request Callback", min_length=2, max_length=40)
     widget_position: Literal["right", "left"] = "right"
@@ -733,6 +734,7 @@ class AgentWelcomeConfig(BaseModel):
         pattern="^(welcome_only|welcome_and_suggestions|ask_assistance|predefined_question)$",
     )
     predefined_question: Optional[str] = None
+    suggested_questions_enabled: bool = True
     suggested_questions: List[SuggestedQuestionItem] = Field(default_factory=list)
 
 

@@ -285,12 +285,14 @@ def activate_agent(
 
         # Sync starter prompts respecting initial_behaviour mode
         init_mode = wel_cfg.get("initial_behaviour", "welcome_and_suggestions")
+        suggestions_enabled = wel_cfg.get("suggested_questions_enabled", True)
         try:
             theme_dict = json.loads(chatbot_setting.theme_config_json or "{}")
         except Exception:
             theme_dict = {}
 
-        if init_mode == "welcome_only":
+        theme_dict["suggested_questions_enabled"] = bool(suggestions_enabled and init_mode != "welcome_only")
+        if init_mode == "welcome_only" or not suggestions_enabled:
             theme_dict["starter_prompts"] = []
             chatbot_setting.theme_config_json = json.dumps(theme_dict)
         elif wel_cfg.get("suggested_questions") is not None:
@@ -431,15 +433,22 @@ def preview_agent_chat(
         flow_config=flow_cfg,
     )
 
-    # Build suggested queries
+    # Build suggested queries respecting initial_behaviour mode and custom questions
     wel_cfg = draft.get("welcome_config") or {}
+    init_mode = wel_cfg.get("initial_behaviour", "welcome_and_suggestions")
+    suggestions_enabled = wel_cfg.get("suggested_questions_enabled", True)
     suggested_queries = []
-    if wel_cfg.get("suggested_questions"):
-        suggested_queries = [
-            q["text"] for q in wel_cfg["suggested_questions"] if q.get("enabled", True) and q.get("text")
-        ][:4]
-    if not suggested_queries:
-        suggested_queries = generate_suggested_queries(detected_intent, effective_language, organization_name=org.name)
+    if init_mode != "welcome_only" and suggestions_enabled:
+        if wel_cfg.get("suggested_questions"):
+            suggested_queries = [
+                q["text"] for q in wel_cfg["suggested_questions"] if q.get("enabled", True) and q.get("text")
+            ][:3]
+        if not suggested_queries and wel_cfg.get("suggested_questions") is None:
+            suggested_queries = generate_suggested_queries(
+                detected_intent,
+                effective_language,
+                organization_name=org.name,
+            )
 
     return AgentPreviewResponse(
         message=ai_response,

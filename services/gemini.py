@@ -139,8 +139,22 @@ def generate_suggested_queries(
     intent: str,
     language: str = "English",
     organization_name: Optional[str] = None,
+    starter_prompts: Optional[List[str]] = None,
+    enable_suggestions: bool = True,
 ) -> List[str]:
-    """Generate 2-3 relevant follow-up question chips based on conversation intent, language, and org."""
+    """Generate 2-3 relevant follow-up question chips based on conversation intent, language, and org.
+    Strictly respects organization custom starter prompts and suggested questions enable flag."""
+    if not enable_suggestions:
+        return []
+
+    # If the organization explicitly provided a custom list of questions
+    if starter_prompts is not None:
+        cleaned = [p.strip() for p in starter_prompts if isinstance(p, str) and p.strip()]
+        # If explicitly empty list, business disabled / cleared starter questions
+        if len(cleaned) == 0:
+            return []
+        return cleaned[:3]
+
     lang = (language or "English").lower()
     is_prayatna = not organization_name or "prayatna" in organization_name.lower()
     org_label = organization_name or "Prayatna"
@@ -148,10 +162,16 @@ def generate_suggested_queries(
     # Malayalam
     if "malayalam" in lang:
         if intent == "appointment_enquiry":
+            if is_prayatna:
+                return [
+                    "സെന്റർ ലൊക്കേഷനുകളും സമയവും എപ്പോഴാണ്?",
+                    "അസസ്സ്മെന്റിന് എന്തൊക്കെ വിവരങ്ങൾ വേണം?",
+                    "ഓൺലൈൻ കൺസൾട്ടേഷൻ ലഭ്യമാണോ?"
+                ]
             return [
-                "സെന്റർ ലൊക്കേഷനുകളും സമയവും എപ്പോഴാണ്?",
-                "അസസ്സ്മെന്റിന് എന്തൊക്കെ വിവരങ്ങൾ വേണം?",
-                "ഓൺലൈൻ കൺസൾട്ടേഷൻ ലഭ്യമാണോ?"
+                "ഓഫീസ് ലൊക്കേഷനുകളും സമയവും എപ്പോഴാണ്?",
+                f"{org_label} ടീമുമായി എങ്ങനെ സംസാരിക്കാം?",
+                "ഒരു പ്രതിനിധി തിരിച്ചുവിളിക്കാമോ?"
             ]
         elif intent == "payment_support":
             return [
@@ -160,25 +180,43 @@ def generate_suggested_queries(
                 "ഫീസ് റസീറ്റ് എങ്ങനെ ലഭിക്കും?"
             ]
         elif intent == "service_enquiry":
+            if is_prayatna:
+                return [
+                    "ഒരു അസസ്സ്മെന്റ് എങ്ങനെ ബുക്ക് ചെയ്യാം?",
+                    "തെറാപ്പി ഫീസ് വിവരങ്ങൾ അറിയാമോ?",
+                    "മാതാപിതാക്കൾക്ക് സെഷനിൽ ഇരിക്കാമോ?"
+                ]
             return [
-                "ഒരു അസസ്സ്മെന്റ് എങ്ങനെ ബുക്ക് ചെയ്യാം?",
-                "തെറാപ്പി ഫീസ് വിവരങ്ങൾ അറിയാമോ?",
-                "മാതാപിതാക്കൾക്ക് സെഷനിൽ ഇരിക്കാമോ?"
+                f"{org_label} സേവനങ്ങളെക്കുറിച്ച് കൂടുതൽ അറിയാമോ?",
+                "നിരക്കുകൾ / കൊട്ടേഷൻ വിവരങ്ങൾ ലഭ്യമാണോ?",
+                "സേവന സമയങ്ങൾ എപ്പോഴാണ്?"
             ]
         else:
+            if is_prayatna:
+                return [
+                    "പ്രയത്നയിലെ പ്രധാന സേവനങ്ങൾ എന്തൊക്കെയാണ്?",
+                    "അസസ്സ്മെന്റ് എങ്ങനെ ബുക്ക് ചെയ്യാം?",
+                    "ഏത് പ്രായത്തിലുള്ള കുട്ടികൾക്കാണ് സഹಾಯം?"
+                ]
             return [
-                "പ്രയത്നയിലെ പ്രധാന സേവനങ്ങൾ എന്തൊക്കെയാണ്?" if is_prayatna else f"{org_label} നൽകുന്ന പ്രധാന സേവനങ്ങൾ എന്തൊക്കെയാണ്?",
-                "അസസ്സ്മെന്റ് എങ്ങനെ ബുക്ക് ചെയ്യാം?",
-                "ഏത് പ്രായത്തിലുള്ള കുട്ടികൾക്കാണ് സഹായം?" if is_prayatna else "സേവന സമയങ്ങൾ എപ്പോഴാണ്?"
+                f"{org_label} നൽകുന്ന പ്രധാന സേവനങ്ങൾ എന്തൊക്കെയാണ്?",
+                "സേവന സമയങ്ങളും വിവരങ്ങളും എപ്പോഴാണ്?",
+                f"{org_label} ടീമുമായി എങ്ങനെ ബന്ധപ്പെടാം?"
             ]
             
     # Hindi
     elif "hindi" in lang:
         if intent == "appointment_enquiry":
+            if is_prayatna:
+                return [
+                    "सेंटर का पता और समय क्या है?",
+                    "असेसमेंट के लिए क्या जानकारी चाहिए?",
+                    "क्या ऑनलाइन कंसल्टेशन मिल सकता है?"
+                ]
             return [
-                "सेंटर का पता और समय क्या है?",
-                "असेसमेंट के लिए क्या जानकारी चाहिए?",
-                "क्या ऑनलाइन कंसल्टेशन मिल सकता है?"
+                "कार्यालय का पता और समय क्या है?",
+                f"{org_label} टीम से कैसे संपर्क करें?",
+                "क्या कोई प्रतिनिधि कॉल बैक कर सकता है?"
             ]
         elif intent == "payment_support":
             return [
@@ -187,25 +225,43 @@ def generate_suggested_queries(
                 "पेमेंट रसीद कैसे प्राप्त करें?"
             ]
         elif intent == "service_enquiry":
+            if is_prayatna:
+                return [
+                    "असेसमेंट कैसे बुक करें?",
+                    "थेरेपी सेशन की फीस कितनी है?",
+                    "क्या माता-पिता सेशन में रह सकते हैं?"
+                ]
             return [
-                "असेसमेंट कैसे बुक करें?",
-                "थेरेपी सेशन की फीस कितनी है?",
-                "क्या माता-पिता सेशन में रह सकते हैं?"
+                f"{org_label} की सेवाओं के बारे में बताएं",
+                "कोटेशन या शुल्क की जानकारी कैसे मिलेगी?",
+                "कामकाज के समय क्या हैं?"
             ]
         else:
+            if is_prayatna:
+                return [
+                    "प्रयत्न में कौन-सी थेरेपी उपलब्ध हैं?",
+                    "असेसमेंट कैसे बुक करें?",
+                    "किस उम्र के बच्चों के लिए थेरेपी है?"
+                ]
             return [
-                "प्रयत्न में कौन-सी थेरेपी उपलब्ध हैं?" if is_prayatna else f"{org_label} में कौन-सी सेवाएं उपलब्ध हैं?",
-                "असेसमेंट कैसे बुक करें?",
-                "किस उम्र के बच्चों के लिए थेरेपी है?" if is_prayatna else "संपर्क और समय की जानकारी क्या है?"
+                f"{org_label} में कौन-सी सेवाएं उपलब्ध हैं?",
+                "संपर्क और समय की जानकारी क्या है?",
+                f"{org_label} से कैसे जुड़ें?"
             ]
             
     # Tamil
     elif "tamil" in lang:
         if intent == "appointment_enquiry":
+            if is_prayatna:
+                return [
+                    "மையத்தின் முகவரி மற்றும் நேரம் என்ன?",
+                    "மதிப்பீட்டிற்கு என்ன கொண்டு வர வேண்டும்?",
+                    "ஆன்லைன் ஆலோசனை கிடைக்குமா?"
+                ]
             return [
-                "மையத்தின் முகவரி மற்றும் நேரம் என்ன?",
-                "மதிப்பீட்டிற்கு என்ன கொண்டு வர வேண்டும்?",
-                "ஆன்லைன் ஆலோசனை கிடைக்குமா?"
+                "அலுவலக முகவரி மற்றும் நேரம் என்ன?",
+                f"{org_label} குழுவை எவ்வாறு தொடர்பு கொள்வது?",
+                "திரும்ப அழைக்க கோரலாமா?"
             ]
         elif intent == "payment_support":
             return [
@@ -213,20 +269,44 @@ def generate_suggested_queries(
                 "கணக்கு குழுவுடன் பேசவும்",
                 "ரசீது எவ்வாறு பெறுவது?"
             ]
-        else:
+        elif intent == "service_enquiry":
+            if is_prayatna:
+                return [
+                    "மதிப்பீட்டை எவ்வாறு பதிவு செய்வது?",
+                    "சிகிச்சை கட்டணங்கள் எவ்வளவு?",
+                    "என்னென்ன சிகிச்சைகள் வழங்கப்படுகின்றன?"
+                ]
             return [
-                "மதிப்பீட்டை எவ்வாறு பதிவு செய்வது?",
-                "சிகிச்சை கட்டணங்கள் எவ்வளவு?",
-                "என்னென்ன சிகிச்சைகள் வழங்கப்படுகின்றன?"
+                f"{org_label} சேவைகள் பற்றி மேலும் கூறுங்கள்",
+                "கட்டண விவரங்கள் அறியலாமா?",
+                "பணிபுரியும் நேரம் என்ன?"
+            ]
+        else:
+            if is_prayatna:
+                return [
+                    "என்னென்ன சிகிச்சைகள் வழங்கப்படுகின்றன?",
+                    "மதிப்பீட்டை எவ்வாறு பதிவு செய்வது?",
+                    "எந்த வயது குழந்தைகளுக்கானது?"
+                ]
+            return [
+                f"{org_label} வழங்கும் சேவைகள் யாவை?",
+                "தொடர்பு மற்றும் நேர விவரங்கள் என்ன?",
+                f"{org_label} குழுவுடன் எவ்வாறு இணைவது?"
             ]
             
     # Kannada
     elif "kannada" in lang:
         if intent == "appointment_enquiry":
+            if is_prayatna:
+                return [
+                    "ಕೇಂದ್ರದ ಸ್ಥಳ ಮತ್ತು ಸಮಯಗಳು ಯಾವುವು?",
+                    "ಮೌಲ್ಯಮಾಪನಕ್ಕೆ ಏನು ತರಬೇಕು?",
+                    "ಆನ್‌ಲೈನ್ ಸಮಾಲೋಚನೆ ಲಭ್ಯವಿದೆಯೇ?"
+                ]
             return [
-                "ಕೇಂದ್ರದ ಸ್ಥಳ ಮತ್ತು ಸಮಯಗಳು ಯಾವುವು?",
-                "ಮೌಲ್ಯಮಾಪನಕ್ಕೆ ಏನು ತರಬೇಕು?",
-                "ಆನ್‌ಲೈನ್ ಸಮಾಲೋಚನೆ ಲಭ್ಯವಿದೆಯೇ?"
+                "ಕಚೇರಿ ಸ್ಥಳ ಮತ್ತು ಸಮಯಗಳು ಯಾವುವು?",
+                f"{org_label} ತಂಡವನ್ನು ಸಂಪರ್ಕಿಸುವುದು ಹೇಗೆ?",
+                "ಕಾಲ್ಬ್ಯಾಕ್ ವಿನಂತಿಸಬಹುದೇ?"
             ]
         elif intent == "payment_support":
             return [
@@ -234,20 +314,44 @@ def generate_suggested_queries(
                 "ಖಾತೆಗಳ ತಂಡದೊಂದಿಗೆ ಮಾತನಾಡಿ",
                 "ರಶೀದಿ ಪಡೆಯುವುದು ಹೇಗೆ?"
             ]
-        else:
+        elif intent == "service_enquiry":
+            if is_prayatna:
+                return [
+                    "ಮೌಲ್ಯಮಾಪನವನ್ನು ಹೇಗೆ ಬುಕ್ ಮಾಡುವುದು?",
+                    "ಥೆರಪಿ ಶುಲ್ಕಗಳು ಎಷ್ಟು?",
+                    "ಯಾವ ಚಿಕಿತ್ಸೆಗಳು ಲಭ್ಯವಿವೆ?"
+                ]
             return [
-                "ಮೌಲ್ಯಮಾಪನವನ್ನು ಹೇಗೆ ಬುಕ್ ಮಾಡುವುದು?",
-                "ಥೆರಪಿ ಶುಲ್ಕಗಳು ಎಷ್ಟು?",
-                "ಯಾವ ಚಿಕಿತ್ಸೆಗಳು ಲಭ್ಯವಿವೆ?"
+                f"{org_label} ಸೇವೆಗಳ ಬಗ್ಗೆ ಇನ್ನಷ್ಟು ತಿಳಿಸಿ",
+                "ಶುಲ್ಕಗಳ ವಿವರಗಳನ್ನು ತಿಳಿಯಬಹುದೇ?",
+                "ಕೆಲಸದ ಸಮಯ ಯಾವುದು?"
+            ]
+        else:
+            if is_prayatna:
+                return [
+                    "ಯಾವ ಚಿಕಿತ್ಸೆಗಳು ಲಭ್ಯವಿವೆ?",
+                    "ಮೌಲ್ಯಮಾಪನವನ್ನು ಹೇಗೆ ಬುಕ್ ಮಾಡುವುದು?",
+                    "ಯಾವ ವಯಸ್ಸಿನ ಮಕ್ಕಳಿಗೆ ಸಹಾಯ ಮಾಡಲಾಗುತ್ತದೆ?"
+                ]
+            return [
+                f"{org_label} ಯಾವ ಸೇವೆಗಳನ್ನು ಒದಗಿಸುತ್ತದೆ?",
+                "ಸಮಯ ಮತ್ತು ಸಂಪರ್ಕ ವಿವರಗಳು ಯಾವುವು?",
+                f"{org_label} ತಂಡವನ್ನು ಸಂಪರ್ಕಿಸುವುದು ಹೇಗೆ?"
             ]
             
     # Telugu
     elif "telugu" in lang:
         if intent == "appointment_enquiry":
+            if is_prayatna:
+                return [
+                    "సెంటర్ లొకేషన్ మరియు సమయాలు ఏమిటి?",
+                    "అసెస్మెంట్‌కు ఏమి తీసుకురావాలి?",
+                    "ఆన్‌లైన్ కన్సల్టేషన్ అందుబాటులో ఉందా?"
+                ]
             return [
-                "సెంటర్ లొకేషన్ మరియు సమయాలు ఏమిటి?",
-                "అసెస్మెంట్‌కు ఏమి తీసుకురావాలి?",
-                "ఆన్‌లైన్ కన్సల్టేషన్ అందుబాటులో ఉందా?"
+                "కార్యాలయ స్థానం మరియు సమయాలు ఏమిటి?",
+                f"{org_label} బృందాన్ని ఎలా సంప్రదించాలి?",
+                "కాల్‌బ్యాక్ అభ్యర్థించవచ్చా?"
             ]
         elif intent == "payment_support":
             return [
@@ -255,20 +359,44 @@ def generate_suggested_queries(
                 "అకౌంట్స్ బృందంతో మాట్లాడాలి",
                 "రసీదు ఎలా పొందాలి?"
             ]
-        else:
+        elif intent == "service_enquiry":
+            if is_prayatna:
+                return [
+                    "అసెస్మెంట్‌ను ఎలా బుక్ చేయాలి?",
+                    "థెరపీ ఫీజుల వివరాలు ఏమిటి?",
+                    "ఏ థెరపీలు అందుబాటులో ఉన్నాయి?"
+                ]
             return [
-                "అసెస్మెంట్‌ను ఎలా బుక్ చేయాలి?",
-                "థెరపీ ఫీజుల వివరాలు ఏమిటి?",
-                "ఏ థెరపీలు అందుబాటులో ఉన్నాయి?"
+                f"{org_label} సేవల గురించి మరింత చెప్పండి",
+                "రుసుములు మరియు కోట్ వివరాలు తెలుసుకోవచ్చా?",
+                "పనివేళలు ఏమిటి?"
+            ]
+        else:
+            if is_prayatna:
+                return [
+                    "ఏ థెరపీలు అందుబాటులో ఉన్నాయి?",
+                    "అసెస్మెంట్‌ను ఎలా బుక్ చేయాలి?",
+                    "ఏ వయస్సు పిల్లలకు సహాయం?"
+                ]
+            return [
+                f"{org_label} ఏ సేవలను అందిస్తుంది?",
+                "సమయాలు మరియు సంప్రదింపు వివరాలు ఏమిటి?",
+                f"{org_label} బృందాన్ని ఎలా సంప్రదించాలి?"
             ]
             
     # Default: English
     else:
         if intent == "appointment_enquiry":
+            if is_prayatna:
+                return [
+                    "What are your center locations & timings?",
+                    "What should I bring for assessment?",
+                    "Can we book an online consultation?"
+                ]
             return [
-                "What are your center locations & timings?",
-                "What should I bring for assessment?",
-                "Can we book an online consultation?"
+                f"What are your timings and office locations?",
+                f"How can I contact the {org_label} team?",
+                "Can I request a callback from a representative?"
             ]
         elif intent == "payment_support":
             return [
@@ -277,10 +405,16 @@ def generate_suggested_queries(
                 "What payment methods are supported?"
             ]
         elif intent == "service_enquiry":
+            if is_prayatna:
+                return [
+                    "How to schedule an assessment?",
+                    "What are the therapy session charges?",
+                    "Can parents attend therapy sessions?"
+                ]
             return [
-                "How to schedule an assessment?",
-                "What are the therapy session charges?",
-                "Can parents attend therapy sessions?"
+                f"What services does {org_label} offer?",
+                f"How can I request pricing or a quote?",
+                f"What are your timings and contact details?"
             ]
         else:
             if is_prayatna:
@@ -291,8 +425,8 @@ def generate_suggested_queries(
                 ]
             return [
                 f"What services does {org_label} offer?",
-                "How do I book an appointment?",
-                "What are your timings and contact details?"
+                f"What are your timings and contact details?",
+                f"How can I connect with {org_label}?"
             ]
 
 def _extract_usage_metadata(response_obj: Any, model_name: str) -> Optional[Dict[str, Any]]:
@@ -828,17 +962,27 @@ class GeminiService:
                 fallback_msg = custom_fallback.strip()
             elif retrieved_chunks:
                 top_source = retrieved_chunks[0]
+                cta_question = (
+                    "Would you like to book an assessment or speak with our coordinator?"
+                    if is_prayatna
+                    else f"Would you like to speak with a representative or learn more about {org_label}?"
+                )
                 fallback_msg = (
                     f"Hello! Here is what we found from {org_label}:\n\n"
                     f"{top_source.get('content', '')[:250]}...\n\n"
-                    f"Would you like to book an appointment or speak with our coordinator? "
+                    f"{cta_question} "
                     f"Please share your Name and Phone Number, and our team will get in touch directly."
                 )
             else:
+                cta_fallback = (
+                    "If you would like to book an assessment or learn more, please share your Name and Phone Number."
+                    if is_prayatna
+                    else f"If you would like to connect with {org_label} or request callback, please share your Name and Phone Number."
+                )
                 fallback_msg = (
                     f"Hello! Welcome to {org_label}.\n\n"
                     "We are here to assist you with information and enquiries. "
-                    "If you would like to book an appointment or learn more, please share your Name and Phone Number."
+                    f"{cta_fallback}"
                 )
             return fallback_msg, intent, requires_followup
 

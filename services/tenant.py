@@ -376,7 +376,7 @@ DEFAULT_PRAYATNA_PROMPTS = [
 DEFAULT_GENERIC_PROMPTS = [
     "What services do you offer?",
     "How can I contact your team?",
-    "How do I book an appointment?",
+    "What are your timings and contact details?",
 ]
 
 
@@ -395,6 +395,8 @@ def resolve_chatbot_theme_config(org: Organization, setting: ChatbotSetting) -> 
         raw["starter_prompts"] = (
             list(DEFAULT_PRAYATNA_PROMPTS) if org.slug == "prayatna" else list(DEFAULT_GENERIC_PROMPTS)
         )
+    if "suggested_questions_enabled" not in raw:
+        raw["suggested_questions_enabled"] = True
     if "tagline" not in raw:
         raw["tagline"] = "Instant answers & booking support"
 
