@@ -328,3 +328,44 @@ class WidgetPositionPlacementTests(unittest.TestCase):
         self.assertEqual(c2_bot["theme_config"]["vertical_position"], "top")
         self.assertEqual(c2_bot["theme_config"]["desktop_top_offset"], 50)
         self.assertEqual(c2_bot["theme_config"]["desktop_right_offset"], 50)
+
+    def test_smart_placement_config(self):
+        """Verify smart_placement_enabled and smart_placement_mode defaults and patch updates."""
+        client = TestClient(self.main.app)
+
+        login_res = client.post(
+            "/api/auth/login",
+            json={"email": "admin@prayatna.co.in", "password": "PrayatnaSecret#2026"},
+        )
+        self.assertEqual(login_res.status_code, 200)
+
+        # 1. Fetch current config - verify defaults
+        cfg_res = client.get("/api/admin/chatbot")
+        self.assertEqual(cfg_res.status_code, 200)
+        theme = cfg_res.json()["theme_config"]
+        self.assertTrue(theme.get("smart_placement_enabled", True))
+        self.assertEqual(theme.get("smart_placement_mode", "auto_stack"), "auto_stack")
+
+        # 2. Update to auto_side and disabled
+        update_res = client.patch(
+            "/api/admin/chatbot",
+            json={
+                "theme_config": {
+                    "smart_placement_enabled": False,
+                    "smart_placement_mode": "auto_side",
+                }
+            },
+            headers=_csrf_headers(client),
+        )
+        self.assertEqual(update_res.status_code, 200)
+        up_theme = update_res.json()["theme_config"]
+        self.assertFalse(up_theme["smart_placement_enabled"])
+        self.assertEqual(up_theme["smart_placement_mode"], "auto_side")
+
+        # 3. Verify public config endpoint
+        pub_res = client.get("/api/chat/config?bot=prayatna-bot")
+        self.assertEqual(pub_res.status_code, 200)
+        pub_theme = pub_res.json()["theme_config"]
+        self.assertFalse(pub_theme["smart_placement_enabled"])
+        self.assertEqual(pub_theme["smart_placement_mode"], "auto_side")
+

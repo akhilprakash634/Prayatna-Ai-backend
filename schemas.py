@@ -280,6 +280,8 @@ class ChatbotThemeConfig(BaseModel):
     greeting_auto_hide: int = Field(default=10, ge=0, le=120)
 
     # 5. Position & Placement Settings
+    smart_placement_enabled: bool = True
+    smart_placement_mode: Literal["auto_stack", "auto_side"] = "auto_stack"
     position_preset: Literal[
         "bottom_right",
         "bottom_right_elevated",
