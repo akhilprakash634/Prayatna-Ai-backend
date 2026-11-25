@@ -384,6 +384,7 @@ def handle_chat_stream(payload: ChatRequest, request: Request):
             active_agent_cfg.get("agent_name") if active_agent_cfg else None
         ) or setting.assistant_name
         custom_instructions = setting.custom_instructions
+        stream_theme_cfg = resolve_chatbot_theme_config(org, setting)
     finally:
         db.close()
 
@@ -465,7 +466,7 @@ def handle_chat_stream(payload: ChatRequest, request: Request):
             )
             stream_db.commit()
 
-            theme_cfg = resolve_chatbot_theme_config(org, chatbot_setting)
+            theme_cfg = stream_theme_cfg
             init_mode = theme_cfg.get("initial_behaviour", "welcome_and_suggestions")
             suggestions_enabled = theme_cfg.get("suggested_questions_enabled", True)
             if init_mode == "welcome_only" or not suggestions_enabled:

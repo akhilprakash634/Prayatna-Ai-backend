@@ -247,6 +247,7 @@ class ChatbotThemeConfig(BaseModel):
     suggested_questions_enabled: bool = True
     enquiry_enabled: bool = True
     enquiry_button_label: str = Field(default="Request Callback", min_length=2, max_length=40)
+    enquiry_button_icon: str = Field(default="message-square-plus", max_length=50)
     widget_position: Literal["right", "left"] = "right"
     launcher_label: Optional[str] = Field(default=None, max_length=32)
     show_powered_by: bool = True
@@ -376,6 +377,24 @@ class ChatbotThemeConfig(BaseModel):
     def strip_cta_label(cls, v: Any) -> str:
         val = str(v or "").strip()
         return val or "Request Callback"
+
+    @field_validator("enquiry_button_icon", mode="before")
+    @classmethod
+    def validate_enquiry_icon(cls, v: Any) -> str:
+        val = str(v or "").strip().lower()
+        allowed = {
+            "message-square-plus",
+            "phone",
+            "phone-call",
+            "calendar",
+            "calendar-clock",
+            "mail",
+            "headset",
+            "help-circle",
+            "user-check",
+            "sparkles",
+        }
+        return val if val in allowed else "message-square-plus"
 
     @model_validator(mode="after")
     def sync_position_offsets(self):
