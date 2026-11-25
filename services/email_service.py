@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import smtplib
+import socket
 import ssl
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -42,10 +43,15 @@ def get_smtp_config() -> Dict[str, Any]:
     }
 
 
-def resolve_org_smtp_config(email_cfg_data: Optional[Any] = None) -> Dict[str, Any]:
+def resolve_org_smtp_config(
+    email_cfg_data: Optional[Any] = None,
+    ignore_disabled: bool = False,
+) -> Dict[str, Any]:
     """
     Resolve SMTP configuration for an organization.
-    If org has custom SMTP enabled and configured, returns the custom config.
+    If org has custom SMTP configured (or provider in custom, gmail, office365, zoho),
+    uses that configuration.
+    If ignore_disabled=False, only applies if enabled is True.
     Otherwise, returns platform environment defaults.
     """
     base = get_smtp_config()
@@ -62,12 +68,12 @@ def resolve_org_smtp_config(email_cfg_data: Optional[Any] = None) -> Dict[str, A
         cfg = email_cfg_data
 
     provider = cfg.get("provider", "system_default")
-    is_custom = provider in ("smtp_custom", "gmail", "office365")
-    is_enabled = cfg.get("enabled", True)
+    is_custom = provider in ("smtp_custom", "gmail", "office365", "zoho")
+    is_enabled = cfg.get("enabled", True) if not ignore_disabled else True
+    host = (cfg.get("smtp_host") or "").strip()
 
-    if is_custom and is_enabled:
-        host = (cfg.get("smtp_host") or "").strip()
-        port = cfg.get("smtp_port") or 587
+    if (is_custom or host) and is_enabled and host:
+        port = cfg.get("smtp_port") or (465 if cfg.get("smtp_encryption") == "ssl" else 587)
         try:
             port = int(port)
         except ValueError:
@@ -81,17 +87,16 @@ def resolve_org_smtp_config(email_cfg_data: Optional[Any] = None) -> Dict[str, A
         from_email = (cfg.get("from_email") or user or base["from_email"]).strip()
         from_name = (cfg.get("from_name") or base["from_name"]).strip()
 
-        if host:
-            return {
-                "host": host,
-                "port": port,
-                "user": user,
-                "password": (cfg.get("smtp_password") or "").strip() or None,
-                "from_email": from_email,
-                "from_name": from_name,
-                "use_tls": use_tls,
-                "use_ssl": use_ssl,
-            }
+        return {
+            "host": host,
+            "port": port,
+            "user": user,
+            "password": (cfg.get("smtp_password") or "").strip() or None,
+            "from_email": from_email,
+            "from_name": from_name,
+            "use_tls": use_tls,
+            "use_ssl": use_ssl,
+        }
 
     # If provider is system_default or no custom host, allow custom from_name / from_email if set
     if cfg.get("from_name"):
@@ -177,7 +182,7 @@ def send_email(
 
 def test_smtp_connection(cfg: Dict[str, Any], to_email: str) -> Tuple[bool, str, Optional[str]]:
     """
-    Test SMTP server connectivity and dispatch a test email.
+    Test SMTP server connectivity and dispatch a test email with specific diagnostics.
     Returns (success, user_message, diagnostic_detail).
     """
     host = (cfg.get("host") or "").strip()
@@ -188,10 +193,21 @@ def test_smtp_connection(cfg: Dict[str, Any], to_email: str) -> Tuple[bool, str,
     if not to_email or "@" not in to_email:
         return False, "A valid test recipient email address is required.", "Invalid test recipient email"
 
+    port = cfg.get("port") or 587
+    try:
+        port = int(port)
+    except ValueError:
+        port = 587
+
+    user = cfg.get("user")
+    password = cfg.get("password")
+    use_ssl = cfg.get("use_ssl", False)
+    use_tls = cfg.get("use_tls", False)
+
     subject = f"✅ Test Email: SMTP Connected Successfully ({cfg.get('from_name') or 'Mail Service'})"
-    sec_str = "SSL (Port 465)" if cfg.get("use_ssl") else ("TLS (Port 587)" if cfg.get("use_tls") else "Plain")
+    sec_str = "SSL (Port 465)" if use_ssl else ("TLS (Port 587)" if use_tls else "Plain")
     sender_name = cfg.get("from_name") or "Mail Service"
-    sender_email = cfg.get("from_email") or "noreply@thescalecraft.in"
+    sender_email = cfg.get("from_email") or user or "noreply@thescalecraft.in"
 
     html = f"""
     <!DOCTYPE html>
@@ -211,9 +227,9 @@ def test_smtp_connection(cfg: Dict[str, Any], to_email: str) -> Tuple[bool, str,
           This test confirms that your business mail server is properly connected. When visitors submit new enquiries or callback requests on your website, real-time alerts will arrive directly in your inbox.
         </p>
         <div style="background-color: #f1f5f9; border-radius: 10px; padding: 14px 18px; font-size: 13px; color: #334155; margin-bottom: 20px;">
-          <div style="margin-bottom: 6px;"><strong>SMTP Server:</strong> {host}:{cfg.get('port')}</div>
+          <div style="margin-bottom: 6px;"><strong>SMTP Server:</strong> {host}:{port}</div>
           <div style="margin-bottom: 6px;"><strong>Security:</strong> {sec_str}</div>
-          <div style="margin-bottom: 6px;"><strong>Authenticated User:</strong> {cfg.get('user') or 'None'}</div>
+          <div style="margin-bottom: 6px;"><strong>Authenticated User:</strong> {user or 'None'}</div>
           <div><strong>Sender:</strong> {sender_name} &lt;{sender_email}&gt;</div>
         </div>
         <p style="font-size: 11px; color: #94a3b8; text-align: center; margin: 0;">
@@ -224,18 +240,66 @@ def test_smtp_connection(cfg: Dict[str, Any], to_email: str) -> Tuple[bool, str,
     </html>
     """
 
-    ok = send_email(
-        to_email=to_email,
-        subject=subject,
-        html_content=html,
-        from_name=sender_name,
-        smtp_config=cfg,
-    )
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = formataddr((sender_name, sender_email))
+    msg["To"] = to_email
+    msg["Message-ID"] = make_msgid(domain=sender_email.split("@")[-1] if "@" in sender_email else None)
+    msg.attach(MIMEText(html, "html", "utf-8"))
 
-    if ok:
+    try:
+        if use_ssl:
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL(host, port, context=context, timeout=12) as server:
+                if user and password:
+                    server.login(user, password)
+                server.sendmail(sender_email, [to_email], msg.as_string())
+        else:
+            with smtplib.SMTP(host, port, timeout=12) as server:
+                server.ehlo()
+                if use_tls:
+                    context = ssl.create_default_context()
+                    server.starttls(context=context)
+                    server.ehlo()
+                if user and password:
+                    server.login(user, password)
+                server.sendmail(sender_email, [to_email], msg.as_string())
+
+        logger.info(f"Test email sent successfully to {to_email} via {host}:{port}")
         return True, f"Test email sent successfully to {to_email}. Please check your inbox (and spam/promotions folder).", None
-    else:
-        return False, f"Failed to deliver email through {host}:{cfg.get('port')}. Please check your host, port, username, and password.", f"SMTP dispatch failed to {host}"
+
+    except smtplib.SMTPAuthenticationError as auth_err:
+        raw_msg = str(auth_err)
+        return (
+            False,
+            f"Authentication failed with {host}. Please verify your username and password. Note: If 2-Factor Authentication is enabled on your email account (Zoho, Google, Microsoft), you must generate and use an App Password.",
+            f"SMTPAuthenticationError: {raw_msg}",
+        )
+    except smtplib.SMTPServerDisconnected as disc_err:
+        return (
+            False,
+            f"Server disconnected unexpectedly on {host}:{port}. Check if Port 465 (with SSL) or Port 587 (with STARTTLS) is required.",
+            f"SMTPServerDisconnected: {str(disc_err)}",
+        )
+    except (socket.timeout, TimeoutError):
+        return (
+            False,
+            f"Connection timed out trying to reach {host}:{port}. Check that the host name and port are correct (e.g. Zoho standard is port 465 for SSL or 587 for TLS, not {port}).",
+            f"Timeout connecting to {host}:{port}",
+        )
+    except ssl.SSLError as ssl_err:
+        return (
+            False,
+            f"SSL/TLS handshake failed on {host}:{port}. Check if your port matches the encryption mode (Port 465 for SSL, Port 587 for TLS).",
+            f"SSLError: {str(ssl_err)}",
+        )
+    except Exception as e:
+        logger.error(f"Test email failed for {host}:{port}: {e}", exc_info=True)
+        return (
+            False,
+            f"Failed to deliver email through {host}:{port}: {str(e)}",
+            f"SMTP error: {str(e)}",
+        )
 
 
 def send_lead_alert_email(

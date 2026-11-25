@@ -375,7 +375,7 @@ def get_email_service_config(
     comp_email = cfg.get("company_email") or ctx.user.email
 
     return EmailServiceConfig(
-        enabled=cfg.get("enabled", False),
+        enabled=cfg.get("enabled", True),
         company_email=comp_email,
         additional_emails=cfg.get("additional_emails", []),
         provider=cfg.get("provider", "system_default"),
@@ -482,8 +482,29 @@ def test_email_service(
         except Exception:
             current_cfg = {}
 
+    # Merge draft config sent directly from the UI form
+    if req.config:
+        if req.config.provider is not None:
+            current_cfg["provider"] = req.config.provider
+        if req.config.smtp_host is not None:
+            current_cfg["smtp_host"] = req.config.smtp_host.strip()
+        if req.config.smtp_port is not None:
+            current_cfg["smtp_port"] = int(req.config.smtp_port)
+        if req.config.smtp_user is not None:
+            current_cfg["smtp_user"] = req.config.smtp_user.strip()
+        if req.config.smtp_password and req.config.smtp_password != "••••••••":
+            current_cfg["smtp_password"] = req.config.smtp_password.strip()
+        if req.config.smtp_encryption is not None:
+            current_cfg["smtp_encryption"] = req.config.smtp_encryption
+        if req.config.from_name is not None:
+            current_cfg["from_name"] = req.config.from_name.strip()
+        if req.config.from_email is not None:
+            current_cfg["from_email"] = req.config.from_email.strip()
+        if req.config.company_email is not None:
+            current_cfg["company_email"] = req.config.company_email.strip()
+
     target = req.target_email or current_cfg.get("company_email") or ctx.user.email
-    resolved_smtp = resolve_org_smtp_config(current_cfg)
+    resolved_smtp = resolve_org_smtp_config(current_cfg, ignore_disabled=True)
 
     success, message, diagnostic = test_smtp_connection(resolved_smtp, target)
     return SendTestEmailResponse(

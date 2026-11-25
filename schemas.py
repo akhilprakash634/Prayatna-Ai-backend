@@ -159,6 +159,7 @@ class EmailServiceConfigUpdate(BaseModel):
 
 class SendTestEmailRequest(BaseModel):
     target_email: Optional[str] = None
+    config: Optional[EmailServiceConfigUpdate] = None
 
 class SendTestEmailResponse(BaseModel):
     success: bool
