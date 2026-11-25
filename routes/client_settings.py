@@ -13,8 +13,12 @@ from schemas import (
     ChatbotConfigResponse,
     ChatbotConfigUpdate,
     ChatbotThemeConfig,
+    EmailServiceConfig,
+    EmailServiceConfigUpdate,
     OrganizationUpdateRequest,
     ProfileUpdateRequest,
+    SendTestEmailRequest,
+    SendTestEmailResponse,
     SubscriptionResponse,
     UsageSummaryResponse,
     WidgetAssetUploadResponse,
@@ -346,4 +350,146 @@ def update_own_profile(
     ctx.user.name = req.name.strip()
     db.commit()
     return {"id": ctx.user.id, "name": ctx.user.name, "email": ctx.user.email}
+
+
+@router.get("/email-service", response_model=EmailServiceConfig)
+def get_email_service_config(
+    ctx: AuthContext = Depends(require_client_admin),
+    db: Session = Depends(get_db),
+):
+    from services.email_service import resolve_org_smtp_config
+
+    org = db.query(Organization).filter(Organization.id == ctx.organization_id).first()
+    if not org:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found.")
+
+    cfg: dict = {}
+    if org.email_config_json:
+        try:
+            cfg = json.loads(org.email_config_json)
+        except Exception:
+            cfg = {}
+
+    has_pw = bool(cfg.get("smtp_password"))
+    masked_pw = "••••••••" if has_pw else None
+    comp_email = cfg.get("company_email") or ctx.user.email
+
+    return EmailServiceConfig(
+        enabled=cfg.get("enabled", False),
+        company_email=comp_email,
+        additional_emails=cfg.get("additional_emails", []),
+        provider=cfg.get("provider", "system_default"),
+        smtp_host=cfg.get("smtp_host"),
+        smtp_port=cfg.get("smtp_port") or 587,
+        smtp_user=cfg.get("smtp_user"),
+        smtp_password=masked_pw,
+        has_password=has_pw,
+        smtp_encryption=cfg.get("smtp_encryption", "tls"),
+        from_name=cfg.get("from_name") or org.name,
+        from_email=cfg.get("from_email") or comp_email,
+    )
+
+
+@router.put("/email-service", response_model=EmailServiceConfig)
+def update_email_service_config(
+    req: EmailServiceConfigUpdate,
+    ctx: AuthContext = Depends(require_client_admin),
+    db: Session = Depends(get_db),
+):
+    org = db.query(Organization).filter(Organization.id == ctx.organization_id).first()
+    if not org:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found.")
+
+    current_cfg: dict = {}
+    if org.email_config_json:
+        try:
+            current_cfg = json.loads(org.email_config_json)
+        except Exception:
+            current_cfg = {}
+
+    if req.enabled is not None:
+        current_cfg["enabled"] = bool(req.enabled)
+    if req.company_email is not None:
+        current_cfg["company_email"] = req.company_email.strip().lower() or None
+    if req.additional_emails is not None:
+        clean_emails = [
+            e.strip().lower()
+            for e in req.additional_emails
+            if e and "@" in e.strip()
+        ]
+        current_cfg["additional_emails"] = clean_emails
+    if req.provider is not None:
+        current_cfg["provider"] = req.provider.strip().lower()
+    if req.smtp_host is not None:
+        current_cfg["smtp_host"] = req.smtp_host.strip() or None
+    if req.smtp_port is not None:
+        current_cfg["smtp_port"] = int(req.smtp_port)
+    if req.smtp_user is not None:
+        current_cfg["smtp_user"] = req.smtp_user.strip() or None
+    if req.smtp_password is not None:
+        val = req.smtp_password.strip()
+        if val and val != "••••••••":
+            current_cfg["smtp_password"] = val
+        elif not val:
+            current_cfg["smtp_password"] = None
+    if req.smtp_encryption is not None:
+        current_cfg["smtp_encryption"] = req.smtp_encryption.strip().lower()
+    if req.from_name is not None:
+        current_cfg["from_name"] = req.from_name.strip() or None
+    if req.from_email is not None:
+        current_cfg["from_email"] = req.from_email.strip().lower() or None
+
+    org.email_config_json = json.dumps(current_cfg)
+    db.commit()
+    db.refresh(org)
+
+    has_pw = bool(current_cfg.get("smtp_password"))
+    masked_pw = "••••••••" if has_pw else None
+    comp_email = current_cfg.get("company_email") or ctx.user.email
+
+    return EmailServiceConfig(
+        enabled=current_cfg.get("enabled", False),
+        company_email=comp_email,
+        additional_emails=current_cfg.get("additional_emails", []),
+        provider=current_cfg.get("provider", "system_default"),
+        smtp_host=current_cfg.get("smtp_host"),
+        smtp_port=current_cfg.get("smtp_port") or 587,
+        smtp_user=current_cfg.get("smtp_user"),
+        smtp_password=masked_pw,
+        has_password=has_pw,
+        smtp_encryption=current_cfg.get("smtp_encryption", "tls"),
+        from_name=current_cfg.get("from_name") or org.name,
+        from_email=current_cfg.get("from_email") or comp_email,
+    )
+
+
+@router.post("/email-service/test", response_model=SendTestEmailResponse)
+def test_email_service(
+    req: SendTestEmailRequest,
+    ctx: AuthContext = Depends(require_client_admin),
+    db: Session = Depends(get_db),
+):
+    from services.email_service import resolve_org_smtp_config, test_smtp_connection
+
+    org = db.query(Organization).filter(Organization.id == ctx.organization_id).first()
+    if not org:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found.")
+
+    current_cfg: dict = {}
+    if org.email_config_json:
+        try:
+            current_cfg = json.loads(org.email_config_json)
+        except Exception:
+            current_cfg = {}
+
+    target = req.target_email or current_cfg.get("company_email") or ctx.user.email
+    resolved_smtp = resolve_org_smtp_config(current_cfg)
+
+    success, message, diagnostic = test_smtp_connection(resolved_smtp, target)
+    return SendTestEmailResponse(
+        success=success,
+        message=message,
+        diagnostic=diagnostic,
+    )
+
 

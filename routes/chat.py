@@ -89,34 +89,56 @@ def _capture_or_update_enquiry(
 
         # Dispatch background lead alert email for new actionable lead
         try:
+            import json
             from threading import Thread
             from models import ChatbotSetting, Organization, User
-            from services.email_service import send_lead_alert_email
+            from services.email_service import resolve_org_smtp_config, send_lead_alert_email
 
             org = db.query(Organization).filter(Organization.id == organization_id).first()
             setting = db.query(ChatbotSetting).filter(ChatbotSetting.organization_id == organization_id).first()
             admin_user = db.query(User).filter(User.organization_id == organization_id, User.role == "client_admin").first()
             theme_cfg = resolve_chatbot_theme_config(org, setting)
 
-            if theme_cfg.get("lead_notifications_enabled", True):
-                recipient_email = theme_cfg.get("notification_email") or (admin_user.email if admin_user else None)
-                if recipient_email:
-                    lead_payload = {
-                        "parent_name": existing_enquiry.parent_name,
-                        "phone": existing_enquiry.phone,
-                        "email": existing_enquiry.email,
-                        "interested_service": existing_enquiry.interested_service,
-                        "category": existing_enquiry.category,
-                        "description": existing_enquiry.description,
-                        "preferred_contact": existing_enquiry.preferred_contact,
-                    }
+            org_email_cfg: dict = {}
+            if org and org.email_config_json:
+                try:
+                    org_email_cfg = json.loads(org.email_config_json)
+                except Exception:
+                    org_email_cfg = {}
+            resolved_smtp = resolve_org_smtp_config(org_email_cfg)
+
+            recipients = []
+            if org_email_cfg.get("company_email"):
+                recipients.append(org_email_cfg["company_email"].strip().lower())
+            if org_email_cfg.get("additional_emails"):
+                for em in org_email_cfg["additional_emails"]:
+                    if em and "@" in em and em not in recipients:
+                        recipients.append(em.strip().lower())
+
+            if not recipients and theme_cfg.get("notification_email"):
+                recipients.append(theme_cfg["notification_email"].strip().lower())
+            if not recipients and admin_user and admin_user.email:
+                recipients.append(admin_user.email.strip().lower())
+
+            if recipients and theme_cfg.get("lead_notifications_enabled", True):
+                lead_payload = {
+                    "parent_name": existing_enquiry.parent_name,
+                    "phone": existing_enquiry.phone,
+                    "email": existing_enquiry.email,
+                    "interested_service": existing_enquiry.interested_service,
+                    "category": existing_enquiry.category,
+                    "description": existing_enquiry.description,
+                    "preferred_contact": existing_enquiry.preferred_contact,
+                }
+                for rcpt in recipients:
                     Thread(
                         target=send_lead_alert_email,
                         kwargs={
-                            "admin_email": recipient_email,
+                            "admin_email": rcpt,
                             "org_name": org.name if org else "Your Organization",
                             "enquiry_data": lead_payload,
                             "bot_name": setting.bot_name if setting else None,
+                            "smtp_config": resolved_smtp,
                         },
                         daemon=True,
                     ).start()

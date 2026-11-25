@@ -129,6 +129,42 @@ class EnquiryResponse(BaseModel):
     class Config:
         from_attributes = True
 
+# Business-wide Email Service Schemas
+class EmailServiceConfig(BaseModel):
+    enabled: bool = False
+    company_email: Optional[str] = None
+    additional_emails: List[str] = Field(default_factory=list)
+    provider: str = "system_default"  # system_default, gmail, office365, smtp_custom
+    smtp_host: Optional[str] = None
+    smtp_port: int = 587
+    smtp_user: Optional[str] = None
+    smtp_password: Optional[str] = None
+    has_password: bool = False
+    smtp_encryption: str = "tls"  # tls, ssl, none
+    from_name: Optional[str] = None
+    from_email: Optional[str] = None
+
+class EmailServiceConfigUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    company_email: Optional[str] = None
+    additional_emails: Optional[List[str]] = None
+    provider: Optional[str] = None
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = None
+    smtp_user: Optional[str] = None
+    smtp_password: Optional[str] = None
+    smtp_encryption: Optional[str] = None
+    from_name: Optional[str] = None
+    from_email: Optional[str] = None
+
+class SendTestEmailRequest(BaseModel):
+    target_email: Optional[str] = None
+
+class SendTestEmailResponse(BaseModel):
+    success: bool
+    message: str
+    diagnostic: Optional[str] = None
+
 # Knowledge Schemas
 class ScrapeRequest(BaseModel):
     url: str = Field(..., min_length=5, max_length=500)

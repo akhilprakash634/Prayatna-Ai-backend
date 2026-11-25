@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import smtplib
@@ -5,7 +6,7 @@ import ssl
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr, make_msgid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("prayatna_email")
 
@@ -16,7 +17,7 @@ def is_smtp_configured() -> bool:
 
 
 def get_smtp_config() -> Dict[str, Any]:
-    """Retrieve SMTP configuration from environment with sensible defaults."""
+    """Retrieve default SMTP configuration from environment with sensible defaults."""
     port_str = os.getenv("SMTP_PORT", "587").strip()
     try:
         port = int(port_str)
@@ -41,6 +42,66 @@ def get_smtp_config() -> Dict[str, Any]:
     }
 
 
+def resolve_org_smtp_config(email_cfg_data: Optional[Any] = None) -> Dict[str, Any]:
+    """
+    Resolve SMTP configuration for an organization.
+    If org has custom SMTP enabled and configured, returns the custom config.
+    Otherwise, returns platform environment defaults.
+    """
+    base = get_smtp_config()
+    if not email_cfg_data:
+        return base
+
+    cfg: Dict[str, Any] = {}
+    if isinstance(email_cfg_data, str):
+        try:
+            cfg = json.loads(email_cfg_data)
+        except Exception:
+            cfg = {}
+    elif isinstance(email_cfg_data, dict):
+        cfg = email_cfg_data
+
+    provider = cfg.get("provider", "system_default")
+    is_custom = provider in ("smtp_custom", "gmail", "office365")
+    is_enabled = cfg.get("enabled", True)
+
+    if is_custom and is_enabled:
+        host = (cfg.get("smtp_host") or "").strip()
+        port = cfg.get("smtp_port") or 587
+        try:
+            port = int(port)
+        except ValueError:
+            port = 587
+
+        enc = (cfg.get("smtp_encryption") or "tls").strip().lower()
+        use_ssl = enc == "ssl" or port == 465
+        use_tls = enc == "tls" and not use_ssl
+
+        user = (cfg.get("smtp_user") or "").strip() or None
+        from_email = (cfg.get("from_email") or user or base["from_email"]).strip()
+        from_name = (cfg.get("from_name") or base["from_name"]).strip()
+
+        if host:
+            return {
+                "host": host,
+                "port": port,
+                "user": user,
+                "password": (cfg.get("smtp_password") or "").strip() or None,
+                "from_email": from_email,
+                "from_name": from_name,
+                "use_tls": use_tls,
+                "use_ssl": use_ssl,
+            }
+
+    # If provider is system_default or no custom host, allow custom from_name / from_email if set
+    if cfg.get("from_name"):
+        base["from_name"] = str(cfg["from_name"]).strip()
+    if cfg.get("from_email"):
+        base["from_email"] = str(cfg["from_email"]).strip()
+
+    return base
+
+
 def send_email(
     to_email: str,
     subject: str,
@@ -49,6 +110,7 @@ def send_email(
     from_name: Optional[str] = None,
     reply_to: Optional[str] = None,
     cc: Optional[str] = None,
+    smtp_config: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """
     Send an email via SMTP.
@@ -59,9 +121,9 @@ def send_email(
         logger.warning(f"Invalid recipient email: {to_email}")
         return False
 
-    cfg = get_smtp_config()
+    cfg = smtp_config or get_smtp_config()
 
-    if not cfg["host"]:
+    if not cfg.get("host"):
         logger.info(
             f"[Email Simulated - No SMTP configured] To: {to_email} | Subject: '{subject}' | Reply-To: {reply_to}"
         )
@@ -69,14 +131,15 @@ def send_email(
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    sender_name = from_name or cfg["from_name"]
-    msg["From"] = formataddr((sender_name, cfg["from_email"]))
+    sender_name = from_name or cfg.get("from_name") or "Notification"
+    sender_email = cfg.get("from_email") or "noreply@thescalecraft.in"
+    msg["From"] = formataddr((sender_name, sender_email))
     msg["To"] = to_email
-    msg["Message-ID"] = make_msgid(domain=cfg["from_email"].split("@")[-1] if "@" in cfg["from_email"] else None)
+    msg["Message-ID"] = make_msgid(domain=sender_email.split("@")[-1] if "@" in sender_email else None)
 
-    if reply_to:
+    if reply_to and "@" in reply_to:
         msg["Reply-To"] = reply_to
-    if cc:
+    if cc and "@" in cc:
         msg["Cc"] = cc
 
     plain_body = text_content or html_content.replace("<br>", "\n").replace("</p>", "\n\n")
@@ -84,32 +147,95 @@ def send_email(
     msg.attach(MIMEText(html_content, "html", "utf-8"))
 
     recipients = [to_email]
-    if cc:
+    if cc and "@" in cc:
         recipients.append(cc.strip().lower())
 
     try:
-        if cfg["use_ssl"]:
+        if cfg.get("use_ssl"):
             context = ssl.create_default_context()
             with smtplib.SMTP_SSL(cfg["host"], cfg["port"], context=context, timeout=12) as server:
-                if cfg["user"] and cfg["password"]:
+                if cfg.get("user") and cfg.get("password"):
                     server.login(cfg["user"], cfg["password"])
-                server.sendmail(cfg["from_email"], recipients, msg.as_string())
+                server.sendmail(sender_email, recipients, msg.as_string())
         else:
             with smtplib.SMTP(cfg["host"], cfg["port"], timeout=12) as server:
                 server.ehlo()
-                if cfg["use_tls"]:
+                if cfg.get("use_tls"):
                     context = ssl.create_default_context()
                     server.starttls(context=context)
                     server.ehlo()
-                if cfg["user"] and cfg["password"]:
+                if cfg.get("user") and cfg.get("password"):
                     server.login(cfg["user"], cfg["password"])
-                server.sendmail(cfg["from_email"], recipients, msg.as_string())
+                server.sendmail(sender_email, recipients, msg.as_string())
 
-        logger.info(f"Email sent successfully to {to_email} (Subject: '{subject}')")
+        logger.info(f"Email sent successfully to {to_email} via {cfg.get('host')} (Subject: '{subject}')")
         return True
     except Exception as e:
-        logger.error(f"Failed to send email to {to_email}: {e}", exc_info=True)
+        logger.error(f"Failed to send email to {to_email} via {cfg.get('host')}: {e}", exc_info=True)
         return False
+
+
+def test_smtp_connection(cfg: Dict[str, Any], to_email: str) -> Tuple[bool, str, Optional[str]]:
+    """
+    Test SMTP server connectivity and dispatch a test email.
+    Returns (success, user_message, diagnostic_detail).
+    """
+    host = (cfg.get("host") or "").strip()
+    if not host:
+        return False, "SMTP Host is required to test email connection.", "Missing SMTP host"
+
+    to_email = to_email.strip().lower()
+    if not to_email or "@" not in to_email:
+        return False, "A valid test recipient email address is required.", "Invalid test recipient email"
+
+    subject = f"✅ Test Email: SMTP Connected Successfully ({cfg.get('from_name') or 'Mail Service'})"
+    sec_str = "SSL (Port 465)" if cfg.get("use_ssl") else ("TLS (Port 587)" if cfg.get("use_tls") else "Plain")
+    sender_name = cfg.get("from_name") or "Mail Service"
+    sender_email = cfg.get("from_email") or "noreply@thescalecraft.in"
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head><meta charset="utf-8"></head>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; padding: 24px; margin: 0;">
+      <div style="max-width: 560px; margin: 0 auto; background: #ffffff; border-radius: 14px; border: 1px solid #e2e8f0; padding: 28px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+        <div style="text-align: center; margin-bottom: 16px;">
+          <span style="background-color: #ecfdf5; color: #047857; font-size: 13px; font-weight: 700; padding: 6px 14px; border-radius: 9999px;">
+            ✓ SMTP Connection Confirmed
+          </span>
+        </div>
+        <h2 style="color: #0f172a; font-size: 20px; font-weight: 700; text-align: center; margin: 0 0 12px;">
+          Your Mail Service is Working!
+        </h2>
+        <p style="color: #475569; font-size: 14px; line-height: 1.6; text-align: center; margin: 0 0 20px;">
+          This test confirms that your business mail server is properly connected. When visitors submit new enquiries or callback requests on your website, real-time alerts will arrive directly in your inbox.
+        </p>
+        <div style="background-color: #f1f5f9; border-radius: 10px; padding: 14px 18px; font-size: 13px; color: #334155; margin-bottom: 20px;">
+          <div style="margin-bottom: 6px;"><strong>SMTP Server:</strong> {host}:{cfg.get('port')}</div>
+          <div style="margin-bottom: 6px;"><strong>Security:</strong> {sec_str}</div>
+          <div style="margin-bottom: 6px;"><strong>Authenticated User:</strong> {cfg.get('user') or 'None'}</div>
+          <div><strong>Sender:</strong> {sender_name} &lt;{sender_email}&gt;</div>
+        </div>
+        <p style="font-size: 11px; color: #94a3b8; text-align: center; margin: 0;">
+          Sent by AssistStudio Email Configuration Test.
+        </p>
+      </div>
+    </body>
+    </html>
+    """
+
+    ok = send_email(
+        to_email=to_email,
+        subject=subject,
+        html_content=html,
+        from_name=sender_name,
+        smtp_config=cfg,
+    )
+
+    if ok:
+        return True, f"Test email sent successfully to {to_email}. Please check your inbox (and spam/promotions folder).", None
+    else:
+        return False, f"Failed to deliver email through {host}:{cfg.get('port')}. Please check your host, port, username, and password.", f"SMTP dispatch failed to {host}"
 
 
 def send_lead_alert_email(
@@ -117,6 +243,7 @@ def send_lead_alert_email(
     org_name: str,
     enquiry_data: Dict[str, Any],
     bot_name: Optional[str] = None,
+    smtp_config: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """
     Send an email notification to the organization administrator when an actionable lead
@@ -165,7 +292,7 @@ def send_lead_alert_email(
           <div class="badge">Actionable Enquiry</div>
 
           <div class="field">
-            <div class="field-label">Visitor / Parent Name</div>
+            <div class="field-label">Visitor / Customer Name</div>
             <div class="field-value">{visitor_name}</div>
           </div>
 
@@ -219,7 +346,16 @@ Notes:
 
 View in dashboard: {app_url}/admin/enquiries
 """
-    return send_email(to_email=admin_email, subject=subject, html_content=html, text_content=text, from_name=org_name)
+    reply_to = email if (email and "@" in email and email != "Not provided") else None
+    return send_email(
+        to_email=admin_email,
+        subject=subject,
+        html_content=html,
+        text_content=text,
+        from_name=org_name,
+        reply_to=reply_to,
+        smtp_config=smtp_config,
+    )
 
 
 def send_enquiry_reply_email(
@@ -229,6 +365,7 @@ def send_enquiry_reply_email(
     subject: str,
     body_text: str,
     admin_reply_to: Optional[str] = None,
+    smtp_config: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """
     Send an email reply directly to a visitor from the business admin panel.
@@ -276,4 +413,5 @@ def send_enquiry_reply_email(
         text_content=f"Dear {visitor_name},\n\n{body_text}\n\nBest regards,\n{org_name} Team",
         from_name=org_name,
         reply_to=admin_reply_to,
+        smtp_config=smtp_config,
     )

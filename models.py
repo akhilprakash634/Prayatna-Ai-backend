@@ -25,6 +25,7 @@ class Organization(Base):
     logo_url = Column(String(500), nullable=True)
     status = Column(String(30), nullable=False, default="active", index=True)  # active, suspended
     plan = Column(String(50), nullable=False, default="Basic")  # Basic, Professional, Enterprise
+    email_config_json = Column(Text, nullable=True)
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 

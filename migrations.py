@@ -65,6 +65,7 @@ def run_migrations() -> dict:
         _ensure_column_and_index(db, "enquiries", "organization_id", "VARCHAR(36)")
         _ensure_column_and_index(db, "knowledge_documents", "organization_id", "VARCHAR(36)")
         _ensure_column_and_index(db, "chatbot_settings", "theme_config_json", "TEXT")
+        _ensure_column_and_index(db, "organizations", "email_config_json", "TEXT")
         _ensure_column(db, "usage_logs", "input_tokens", "INTEGER NOT NULL DEFAULT 0")
         _ensure_column(db, "usage_logs", "output_tokens", "INTEGER NOT NULL DEFAULT 0")
         _ensure_column(db, "usage_logs", "total_tokens", "INTEGER NOT NULL DEFAULT 0")

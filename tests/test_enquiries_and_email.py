@@ -173,3 +173,55 @@ class EnquiriesAndEmailTests(unittest.TestCase):
         )
         self.assertEqual(send_res.status_code, 400)
         self.assertIn("does not have a valid email", send_res.json()["detail"])
+
+    def test_email_service_configuration_and_test_dispatch(self):
+        """Verify getting, saving, and testing business-wide email service settings."""
+        client = TestClient(self.main.app)
+        self._login_admin(client)
+
+        # 1. Get initial email service config
+        res = client.get("/api/admin/email-service")
+        self.assertEqual(res.status_code, 200)
+        cfg = res.json()
+        self.assertIn("enabled", cfg)
+        self.assertIn("company_email", cfg)
+
+        # 2. Update email service config with company email & custom provider
+        update_payload = {
+            "enabled": True,
+            "company_email": "leads@prayatna.co.in",
+            "additional_emails": ["manager@prayatna.co.in"],
+            "provider": "gmail",
+            "smtp_host": "smtp.gmail.com",
+            "smtp_port": 587,
+            "smtp_user": "leads@prayatna.co.in",
+            "smtp_password": "my-secret-app-password",
+            "smtp_encryption": "tls",
+            "from_name": "Prayatna Center Leads",
+            "from_email": "leads@prayatna.co.in",
+        }
+        put_res = client.put(
+            "/api/admin/email-service",
+            json=update_payload,
+            headers=_csrf_headers(client),
+        )
+        self.assertEqual(put_res.status_code, 200)
+        saved = put_res.json()
+        self.assertTrue(saved["enabled"])
+        self.assertEqual(saved["company_email"], "leads@prayatna.co.in")
+        self.assertEqual(saved["provider"], "gmail")
+        self.assertTrue(saved["has_password"])
+        self.assertEqual(saved["smtp_password"], "••••••••")
+
+        # 3. Test sending a test email
+        test_res = client.post(
+            "/api/admin/email-service/test",
+            json={"target_email": "test-admin@prayatna.co.in"},
+            headers=_csrf_headers(client),
+        )
+        self.assertEqual(test_res.status_code, 200)
+        test_data = test_res.json()
+        self.assertIn("success", test_data)
+        self.assertIn("message", test_data)
+
+

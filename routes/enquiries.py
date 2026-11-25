@@ -15,7 +15,11 @@ from schemas import (
     EnquirySendEmailResponse,
     EnquiryUpdate,
 )
-from services.email_service import send_enquiry_reply_email, send_lead_alert_email
+from services.email_service import (
+    resolve_org_smtp_config,
+    send_enquiry_reply_email,
+    send_lead_alert_email,
+)
 from services.security import (
     AuthContext,
     assert_org_access,
@@ -81,17 +85,39 @@ def create_enquiry(
     try:
         setting = db.query(ChatbotSetting).filter(ChatbotSetting.organization_id == org.id).first()
         theme_cfg = resolve_chatbot_theme_config(org, setting)
-        if theme_cfg.get("lead_notifications_enabled", True):
-            admin_user = (
-                db.query(User)
-                .filter(User.organization_id == org.id, User.role == "client_admin")
-                .first()
-            )
-            recipient_email = theme_cfg.get("notification_email") or (admin_user.email if admin_user else None)
-            if recipient_email:
+
+        org_email_cfg: dict = {}
+        if org.email_config_json:
+            try:
+                org_email_cfg = json.loads(org.email_config_json)
+            except Exception:
+                org_email_cfg = {}
+
+        resolved_smtp = resolve_org_smtp_config(org_email_cfg)
+
+        admin_user = (
+            db.query(User)
+            .filter(User.organization_id == org.id, User.role == "client_admin")
+            .first()
+        )
+        recipients = []
+        if org_email_cfg.get("company_email"):
+            recipients.append(org_email_cfg["company_email"].strip().lower())
+        if org_email_cfg.get("additional_emails"):
+            for em in org_email_cfg["additional_emails"]:
+                if em and "@" in em and em not in recipients:
+                    recipients.append(em.strip().lower())
+
+        if not recipients and theme_cfg.get("notification_email"):
+            recipients.append(theme_cfg["notification_email"].strip().lower())
+        if not recipients and admin_user and admin_user.email:
+            recipients.append(admin_user.email.strip().lower())
+
+        if recipients and theme_cfg.get("lead_notifications_enabled", True):
+            for rcpt in recipients:
                 background_tasks.add_task(
                     send_lead_alert_email,
-                    admin_email=recipient_email,
+                    admin_email=rcpt,
                     org_name=org.name,
                     enquiry_data={
                         "parent_name": new_enquiry.parent_name,
@@ -103,6 +129,7 @@ def create_enquiry(
                         "preferred_contact": new_enquiry.preferred_contact,
                     },
                     bot_name=setting.bot_name if setting else None,
+                    smtp_config=resolved_smtp,
                 )
     except Exception:
         pass
@@ -260,6 +287,14 @@ def send_enquiry_email(
     org = db.query(Organization).filter(Organization.id == ctx.organization_id).first()
     org_name = org.name if org else "Support Team"
 
+    org_email_cfg: dict = {}
+    if org and org.email_config_json:
+        try:
+            org_email_cfg = json.loads(org.email_config_json)
+        except Exception:
+            org_email_cfg = {}
+    resolved_smtp = resolve_org_smtp_config(org_email_cfg)
+
     sent_ok = send_enquiry_reply_email(
         to_email=enquiry.email,
         visitor_name=enquiry.parent_name,
@@ -267,6 +302,7 @@ def send_enquiry_email(
         subject=payload.subject.strip(),
         body_text=payload.body.strip(),
         admin_reply_to=ctx.user.email,
+        smtp_config=resolved_smtp,
     )
 
     if not sent_ok:
