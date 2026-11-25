@@ -97,6 +97,17 @@ class EnquiryUpdate(BaseModel):
     category: Optional[str] = None
     description: Optional[str] = None
 
+class EnquirySendEmailRequest(BaseModel):
+    subject: str = Field(..., min_length=2, max_length=200)
+    body: str = Field(..., min_length=2, max_length=5000)
+    cc_admin: bool = False
+
+class EnquirySendEmailResponse(BaseModel):
+    success: bool
+    message: str
+    sent_to: str
+    status: str
+
 class EnquiryResponse(BaseModel):
     id: str
     conversation_id: Optional[str] = None
@@ -321,6 +332,12 @@ class ChatbotThemeConfig(BaseModel):
     selected_character_asset: Optional[str] = Field(default=None, max_length=600)
     animation_speed: float = Field(default=1.0, ge=0.25, le=3.0)
     character_settings: Optional[Dict[str, Any]] = None
+
+    # 7. Lead Email Notifications
+    lead_notifications_enabled: bool = True
+    notification_email: Optional[str] = Field(default=None, max_length=200)
+    notify_on_callback: bool = True
+    notify_on_service_request: bool = True
 
     @field_validator("starter_prompts", mode="before")
     @classmethod

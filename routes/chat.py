@@ -86,6 +86,42 @@ def _capture_or_update_enquiry(
         db.add(existing_enquiry)
         db.commit()
         db.refresh(existing_enquiry)
+
+        # Dispatch background lead alert email for new actionable lead
+        try:
+            from threading import Thread
+            from models import ChatbotSetting, Organization, User
+            from services.email_service import send_lead_alert_email
+
+            org = db.query(Organization).filter(Organization.id == organization_id).first()
+            setting = db.query(ChatbotSetting).filter(ChatbotSetting.organization_id == organization_id).first()
+            admin_user = db.query(User).filter(User.organization_id == organization_id, User.role == "client_admin").first()
+            theme_cfg = resolve_chatbot_theme_config(org, setting)
+
+            if theme_cfg.get("lead_notifications_enabled", True):
+                recipient_email = theme_cfg.get("notification_email") or (admin_user.email if admin_user else None)
+                if recipient_email:
+                    lead_payload = {
+                        "parent_name": existing_enquiry.parent_name,
+                        "phone": existing_enquiry.phone,
+                        "email": existing_enquiry.email,
+                        "interested_service": existing_enquiry.interested_service,
+                        "category": existing_enquiry.category,
+                        "description": existing_enquiry.description,
+                        "preferred_contact": existing_enquiry.preferred_contact,
+                    }
+                    Thread(
+                        target=send_lead_alert_email,
+                        kwargs={
+                            "admin_email": recipient_email,
+                            "org_name": org.name if org else "Your Organization",
+                            "enquiry_data": lead_payload,
+                            "bot_name": setting.bot_name if setting else None,
+                        },
+                        daemon=True,
+                    ).start()
+        except Exception:
+            pass
     else:
         if lead_info.get("parent_name") and existing_enquiry.parent_name in ("Website Visitor", "Parent / Visitor", ""):
             existing_enquiry.parent_name = lead_info["parent_name"]
