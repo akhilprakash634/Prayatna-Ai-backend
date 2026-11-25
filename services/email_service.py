@@ -84,7 +84,9 @@ def resolve_org_smtp_config(
         use_tls = enc == "tls" and not use_ssl
 
         user = (cfg.get("smtp_user") or "").strip() or None
-        from_email = (cfg.get("from_email") or user or base["from_email"]).strip()
+        from_email = (cfg.get("from_email") or "").strip()
+        if not from_email:
+            from_email = user if (user and "@" in user) else base["from_email"]
         from_name = (cfg.get("from_name") or base["from_name"]).strip()
 
         return {
@@ -137,7 +139,18 @@ def send_email(
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     sender_name = from_name or cfg.get("from_name") or "Notification"
-    sender_email = cfg.get("from_email") or "noreply@thescalecraft.in"
+    user_addr = (cfg.get("user") or "").strip()
+    configured_from = (cfg.get("from_email") or "").strip()
+
+    # For envelope sender, modern mail servers (Zoho, Gmail, etc.) enforce that
+    # the sender address matches the authenticated user or an approved alias.
+    if configured_from:
+        sender_email = configured_from
+    elif user_addr and "@" in user_addr:
+        sender_email = user_addr
+    else:
+        sender_email = "noreply@thescalecraft.in"
+
     msg["From"] = formataddr((sender_name, sender_email))
     msg["To"] = to_email
     msg["Message-ID"] = make_msgid(domain=sender_email.split("@")[-1] if "@" in sender_email else None)
@@ -207,7 +220,15 @@ def test_smtp_connection(cfg: Dict[str, Any], to_email: str) -> Tuple[bool, str,
     subject = f"✅ Test Email: SMTP Connected Successfully ({cfg.get('from_name') or 'Mail Service'})"
     sec_str = "SSL (Port 465)" if use_ssl else ("TLS (Port 587)" if use_tls else "Plain")
     sender_name = cfg.get("from_name") or "Mail Service"
-    sender_email = cfg.get("from_email") or user or "noreply@thescalecraft.in"
+
+    user_addr = (user or "").strip()
+    configured_from = (cfg.get("from_email") or "").strip()
+    if configured_from:
+        sender_email = configured_from
+    elif user_addr and "@" in user_addr:
+        sender_email = user_addr
+    else:
+        sender_email = "noreply@thescalecraft.in"
 
     html = f"""
     <!DOCTYPE html>
@@ -294,7 +315,11 @@ def test_smtp_connection(cfg: Dict[str, Any], to_email: str) -> Tuple[bool, str,
             f"SSLError: {str(ssl_err)}",
         )
     except Exception as e:
+        err_str = str(e)
         logger.error(f"Test email failed for {host}:{port}: {e}", exc_info=True)
+        if "5.7.1" in err_str or "relay" in err_str.lower():
+            hint = f"Sender is not allowed to relay (550 5.7.1). The outgoing mail server ({host}) rejected the sender address. The Sender Email (From Email) must match your authenticated username ({user}) or a verified alias in your Zoho/email account."
+            return False, hint, f"SMTP relay rejected: {err_str}"
         return (
             False,
             f"Failed to deliver email through {host}:{port}: {str(e)}",

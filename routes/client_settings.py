@@ -373,6 +373,8 @@ def get_email_service_config(
     has_pw = bool(cfg.get("smtp_password"))
     masked_pw = "••••••••" if has_pw else None
     comp_email = cfg.get("company_email") or ctx.user.email
+    smtp_user_val = cfg.get("smtp_user")
+    from_email_val = cfg.get("from_email") or (smtp_user_val if smtp_user_val and "@" in smtp_user_val else comp_email)
 
     return EmailServiceConfig(
         enabled=cfg.get("enabled", True),
@@ -381,12 +383,12 @@ def get_email_service_config(
         provider=cfg.get("provider", "system_default"),
         smtp_host=cfg.get("smtp_host"),
         smtp_port=cfg.get("smtp_port") or 587,
-        smtp_user=cfg.get("smtp_user"),
+        smtp_user=smtp_user_val,
         smtp_password=masked_pw,
         has_password=has_pw,
         smtp_encryption=cfg.get("smtp_encryption", "tls"),
         from_name=cfg.get("from_name") or org.name,
-        from_email=cfg.get("from_email") or comp_email,
+        from_email=from_email_val,
     )
 
 
@@ -500,8 +502,20 @@ def test_email_service(
             current_cfg["from_name"] = req.config.from_name.strip()
         if req.config.from_email is not None:
             current_cfg["from_email"] = req.config.from_email.strip()
+        elif req.config.smtp_user is not None and "@" in req.config.smtp_user:
+            current_cfg["from_email"] = req.config.smtp_user.strip()
         if req.config.company_email is not None:
             current_cfg["company_email"] = req.config.company_email.strip()
+
+    # For providers like Zoho and Gmail, if from_email domain does not match authenticated smtp_user,
+    # default from_email to smtp_user to prevent '550 5.7.1 Sender is not allowed to relay emails'
+    u_val = current_cfg.get("smtp_user")
+    f_val = current_cfg.get("from_email")
+    if u_val and "@" in u_val:
+        u_domain = u_val.split("@")[-1].lower()
+        f_domain = f_val.split("@")[-1].lower() if (f_val and "@" in f_val) else ""
+        if u_domain != f_domain:
+            current_cfg["from_email"] = u_val
 
     target = req.target_email or current_cfg.get("company_email") or ctx.user.email
     resolved_smtp = resolve_org_smtp_config(current_cfg, ignore_disabled=True)
