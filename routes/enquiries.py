@@ -1,5 +1,7 @@
 import csv
 import io
+import json
+import logging
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
@@ -30,6 +32,7 @@ from services.security import (
 from services.tenant import resolve_chatbot_theme_config, resolve_public_chatbot
 
 router = APIRouter(prefix="/api/enquiries", tags=["enquiries"])
+logger = logging.getLogger(__name__)
 
 
 def _sanitize_csv_cell(val: Any) -> str:
@@ -114,6 +117,7 @@ def create_enquiry(
             recipients.append(admin_user.email.strip().lower())
 
         if recipients and theme_cfg.get("lead_notifications_enabled", True):
+            logger.info("Dispatching lead alert email for enquiry %s to %d recipient(s): %s", new_enquiry.id, len(recipients), recipients)
             for rcpt in recipients:
                 background_tasks.add_task(
                     send_lead_alert_email,
@@ -131,8 +135,8 @@ def create_enquiry(
                     bot_name=setting.bot_name if setting else None,
                     smtp_config=resolved_smtp,
                 )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error("Failed to dispatch lead notification email for enquiry %s: %s", getattr(new_enquiry, 'id', 'unknown'), e, exc_info=True)
 
     return new_enquiry
 

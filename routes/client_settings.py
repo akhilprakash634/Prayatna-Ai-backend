@@ -411,6 +411,8 @@ def update_email_service_config(
 
     if req.enabled is not None:
         current_cfg["enabled"] = bool(req.enabled)
+    elif "enabled" not in current_cfg:
+        current_cfg["enabled"] = True
     if req.company_email is not None:
         current_cfg["company_email"] = req.company_email.strip().lower() or None
     if req.additional_emails is not None:
@@ -450,7 +452,7 @@ def update_email_service_config(
     comp_email = current_cfg.get("company_email") or ctx.user.email
 
     return EmailServiceConfig(
-        enabled=current_cfg.get("enabled", False),
+        enabled=current_cfg.get("enabled", True),
         company_email=comp_email,
         additional_emails=current_cfg.get("additional_emails", []),
         provider=current_cfg.get("provider", "system_default"),

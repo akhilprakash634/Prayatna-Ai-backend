@@ -3,6 +3,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 
@@ -51,6 +52,13 @@ class EnquiriesAndEmailTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         shutil.rmtree(cls.tmp_dir, ignore_errors=True)
+
+    def setUp(self):
+        self.patcher = patch("services.email_service.send_email", return_value=True)
+        self.mock_send_email = self.patcher.start()
+
+    def tearDown(self):
+        self.patcher.stop()
 
     def _login_admin(self, client: TestClient) -> None:
         res = client.post(
@@ -128,11 +136,12 @@ class EnquiriesAndEmailTests(unittest.TestCase):
             "body": "Hello Priya, we have slots available this Thursday at 11 AM.",
             "cc_admin": False,
         }
-        send_res = client.post(
-            f"/api/enquiries/{enquiry_id}/send-email",
-            json=email_payload,
-            headers=_csrf_headers(client),
-        )
+        with patch("routes.enquiries.send_enquiry_reply_email", return_value=True):
+            send_res = client.post(
+                f"/api/enquiries/{enquiry_id}/send-email",
+                json=email_payload,
+                headers=_csrf_headers(client),
+            )
         self.assertEqual(send_res.status_code, 200)
         send_data = send_res.json()
         self.assertTrue(send_data["success"])
@@ -214,11 +223,12 @@ class EnquiriesAndEmailTests(unittest.TestCase):
         self.assertEqual(saved["smtp_password"], "••••••••")
 
         # 3. Test sending a test email
-        test_res = client.post(
-            "/api/admin/email-service/test",
-            json={"target_email": "test-admin@prayatna.co.in"},
-            headers=_csrf_headers(client),
-        )
+        with patch("services.email_service.test_smtp_connection", return_value=(True, "Test email delivered successfully.", None)):
+            test_res = client.post(
+                "/api/admin/email-service/test",
+                json={"target_email": "test-admin@prayatna.co.in"},
+                headers=_csrf_headers(client),
+            )
         self.assertEqual(test_res.status_code, 200)
         test_data = test_res.json()
         self.assertIn("success", test_data)

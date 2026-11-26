@@ -130,6 +130,7 @@ def _capture_or_update_enquiry(
                     "description": existing_enquiry.description,
                     "preferred_contact": existing_enquiry.preferred_contact,
                 }
+                logger.info("Captured lead from chat: enquiry_id=%s. Dispatching lead alert email to %d recipient(s): %s", existing_enquiry.id, len(recipients), recipients)
                 for rcpt in recipients:
                     Thread(
                         target=send_lead_alert_email,
@@ -142,8 +143,8 @@ def _capture_or_update_enquiry(
                         },
                         daemon=True,
                     ).start()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("Failed to dispatch lead alert email from chat: %s", e, exc_info=True)
     else:
         if lead_info.get("parent_name") and existing_enquiry.parent_name in ("Website Visitor", "Parent / Visitor", ""):
             existing_enquiry.parent_name = lead_info["parent_name"]
