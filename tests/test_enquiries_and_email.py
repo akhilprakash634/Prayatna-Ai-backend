@@ -518,6 +518,35 @@ class EnquiriesAndEmailTests(unittest.TestCase):
             self.assertIsNotNone(captured_complete)
             self.assertEqual(captured_complete["phone"], "7902819158")
             self.assertEqual(captured_complete["email"], "akhil@thescalecraft.in")
+
+            # 4. Test 2-digit and 3-digit numbers are also detected as incomplete phone candidates
+            msg_2digit = "15*15 , Akhil, scalecraft, akhil@thescalecraft.in, 98"
+            lead_2digit = extract_lead_info(message=msg_2digit)
+            self.assertIsNone(lead_2digit.get("phone"))
+            self.assertEqual(lead_2digit.get("incomplete_phone"), "98")
+
+            captured_2digit = _capture_or_update_enquiry(
+                db=db,
+                organization_id=org.id,
+                conversation_id=conv.id,
+                conversation_category="air_freight",
+                message_text=msg_2digit,
+                history_dicts=[],
+                intent="general",
+            )
+            self.assertIsNone(captured_2digit)
+
+            msg_3digit = "Akhil, 123"
+            lead_3digit = extract_lead_info(message=msg_3digit)
+            self.assertIsNone(lead_3digit.get("phone"))
+            self.assertEqual(lead_3digit.get("incomplete_phone"), "123")
+            self.assertEqual(lead_3digit.get("parent_name"), "Akhil")
+
+            lead_standalone = extract_lead_info(message="123")
+            self.assertEqual(lead_standalone.get("incomplete_phone"), "123")
+
+            lead_standalone_2 = extract_lead_info(message="98")
+            self.assertEqual(lead_standalone_2.get("incomplete_phone"), "98")
         finally:
             db.close()
 

@@ -66,32 +66,85 @@ def is_incomplete_phone_candidate(s: str) -> bool:
     if not s:
         return False
     digits = re.sub(r"\D", "", s)
-    if not (7 <= len(digits) <= 9):
-        return False
-    if len(set(digits)) <= 2:
+    # Any digit sequence from 2 to 9 digits is an incomplete phone number
+    if not (2 <= len(digits) <= 9):
         return False
     clean = s.strip()
-    if clean.startswith(("2020", "2021", "2022", "2023", "2024", "2025", "2026", "2027", "2028")):
+    if clean.startswith(("19", "20")) and len(digits) == 4:
         return False
     return True
 
 
 def extract_incomplete_phone_candidate(text: str) -> Optional[str]:
-    """Detect if a user attempted to provide a phone number with only 7-9 digits."""
+    """Detect if a user attempted to provide a phone number with fewer than 10 digits (2-9 digits)."""
     if not text:
         return None
     # Strip emails so digits in email address are not matched
     cleaned = re.sub(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", " ", text)
-    # Strip dimensions like 15*15, 10x20
-    cleaned = re.sub(r"\d+\s*[*xX×]\s*\d+", " ", cleaned)
+    # Strip dimensions like 15*15, 10x20, 15*15*15 cm
+    cleaned = re.sub(
+        r"\d+(?:\.\d+)?\s*[*xX×]\s*\d+(?:\.\d+)?(?:\s*[*xX×]\s*\d+(?:\.\d+)?)?(?:\s*(?:cm|mm|m|in|inches|ft|feet))?",
+        " ",
+        cleaned,
+    )
+    # Strip cargo quantities & units
+    cleaned = re.sub(
+        r"\b\d+(?:\.\d+)?\s*(?:tons?|tonnes?|kg|kgs|kilograms?|g|grams?|packages?|pkgs?|boxes?|cartons?|pallets?|cbm|cbft|ft|feet|containers?|teu|feu|pieces?|pcs?|units?|items?|bags?|drums?|years?|yrs?|months?|mths?|days?|hours?|hrs?|mins?|minutes?|am|pm)\b",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    # Strip currency expressions like $50, ₹500, 500 USD, 1000 INR
+    cleaned = re.sub(
+        r"(?:\$|₹|€|£|rs\.?|inr|usd|aed|eur)\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:inr|usd|aed|eur|rs\.?|dollars?|rupees?)\b",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    # Strip dates like 15th Dec, Dec 15, years 1900-2099
+    cleaned = re.sub(
+        r"\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(
+        r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?\b",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\b(19\d\d|20\d\d)\b", " ", cleaned)
 
-    # 1. Delimiter separated tokens
+    # 1. Explicit phone label (e.g. "phone: 123", "call me at 98", "mobile 98765")
+    label_match = re.search(
+        r"(?:phone|mobile|cell|contact|tel|call\s*(?:me)?(?:\s*at)?|whatsapp|number)\s*[:\-]?\s*(\+?\d[\d\s\-]{0,12}\d|\d{2,9})\b",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if label_match:
+        cand = label_match.group(1).strip()
+        if is_incomplete_phone_candidate(cand):
+            return re.sub(r"[^\d+]", "", cand)
+
+    # 2. Delimiter separated tokens (e.g. "Akhil, 123" or "Akhil, 98" or "15*15, Akhil, akhil@test.com, 98")
     tokens = [t.strip() for t in re.split(r"[,;\n|/]", cleaned) if t.strip()]
     for t in tokens:
-        if is_incomplete_phone_candidate(t):
-            return re.sub(r"[^\d+]", "", t)
+        clean_t = re.sub(r"[^\d+]", "", t)
+        if is_incomplete_phone_candidate(clean_t):
+            words = [w for w in re.split(r"\s+", t) if w.isalpha()]
+            if not words or any(w.lower() in ("phone", "mobile", "call", "num", "no") for w in words):
+                return clean_t
 
-    # 2. Regex matching phone-like numbers with 7-9 digits
+    # 3. Whole message is digits or phone format (e.g. user just entered "98" or "123" or "790281915")
+    stripped_clean = cleaned.strip()
+    clean_digits = re.sub(r"[^\d+]", "", stripped_clean)
+    if is_incomplete_phone_candidate(clean_digits):
+        remaining_alpha = re.sub(r"[^a-zA-Z]", "", stripped_clean)
+        if len(remaining_alpha) == 0:
+            return clean_digits
+
+    # 4. In-text sequences matching phone-like numbers with 7-9 digits or phone country code
     candidates = re.finditer(r"(\+?[1-9]\d{0,3}[-.\s]?)?\(?\d{2,5}\)?[-.\s]?\d{2,4}[-.\s]?\d{1,4}", cleaned)
     for m in candidates:
         raw = m.group(0).strip()
@@ -234,7 +287,7 @@ def extract_lead_info(
     # 5. Comma / Delimiter fallback for age if present in current message
     tokens = [t.strip() for t in re.split(r"[,;\n|/]", msg_only) if t.strip()]
     for t in tokens:
-        if not child_age and re.fullmatch(r"\d{1,2}", t):
+        if not child_age and not incomplete_phone and re.fullmatch(r"\d{1,2}", t):
             val = int(t)
             if 1 <= val <= 20:
                 child_age = f"{val} years"
