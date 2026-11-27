@@ -71,6 +71,52 @@ def extract_phone_candidate(text: str) -> Optional[str]:
             return raw
     return None
 
+NON_NAME_WORDS = {
+    "yes", "no", "hi", "hello", "hey", "appointment", "assessment",
+    "speech therapy", "therapy", "general", "okay", "ok", "please", "thanks", "thank",
+    "enquiry", "inquiry", "quote", "price", "pricing", "service", "services",
+    "logistics", "air freight", "sea freight", "freight", "customs", "customs clearance",
+    "import", "export", "warehousing", "transportation", "cargo", "callback", "support",
+    "help", "query", "need", "urgent", "call", "visitor", "parent", "client", "customer",
+    "location", "address", "phone", "email", "mobile", "number", "contact", "details",
+}
+
+
+def _extract_name_candidate(text: str) -> Optional[str]:
+    """Helper to extract a person's name from a text snippet."""
+    if not text or not isinstance(text, str):
+        return None
+    cleaned = text.strip()
+    if not cleaned:
+        return None
+
+    # Pattern A: Explicit label/introductions: "Name: Akhil", "My name is Akhil", "I am Akhil", "This is Akhil"
+    name_match = re.search(
+        r"(?:name\s*[:\-]?\s*|my name is\s+|i am\s+|this is\s+)([A-Za-z]{2,20}(?:\s+[A-Za-z]{2,20})?)",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if name_match:
+        cand = name_match.group(1).strip()
+        cand = re.sub(r"\b(and|my|the|is|phone|mobile|email|contact|here|from)\b.*$", "", cand, flags=re.IGNORECASE).strip()
+        if cand and cand.lower() not in NON_NAME_WORDS:
+            return cand.title()
+
+    # Pattern B: Delimiter parsing (e.g. "Akhil, 790281915" or "Akhil - 9876543210")
+    tokens = [t.strip() for t in re.split(r"[,;\n|/\-]", cleaned) if t.strip()]
+    for t in tokens:
+        # Ignore if contains digits, emails, urls or special punctuation
+        if re.search(r"[\d@://.]", t):
+            continue
+        # Pure alphabetic tokens, 1 to 3 words
+        if re.fullmatch(r"[A-Za-z\s]{2,30}", t):
+            t_clean = t.strip()
+            if t_clean.lower() not in NON_NAME_WORDS:
+                return t_clean.title()
+
+    return None
+
+
 def extract_lead_info(
     message: str,
     history: Optional[List[Dict[str, str]]] = None,
@@ -109,48 +155,49 @@ def extract_lead_info(
         if age_label_match:
             child_age = f"{age_label_match.group(1)} years"
 
-    # 4. Parent Name extraction
-    parent_name = None
-    # Pattern A: e.g. "Name: Akhil", "My name is Akhil", "I am Akhil"
-    name_match = re.search(
-        r"(?:name\s*[:\-]?\s*|my name is\s+|i am\s+|this is\s+)([A-Za-z]{2,20}(?:\s+[A-Za-z]{2,20})?)",
-        msg_only,
-        re.IGNORECASE,
-    )
-    if name_match:
-        cand = name_match.group(1).strip()
-        cand = re.sub(r"\b(and|my|the|is|phone|mobile|email|contact|here)\b.*$", "", cand, flags=re.IGNORECASE).strip()
-        if cand:
-            parent_name = cand
+    # 4. Parent Name extraction across current message and previous conversation turns
+    parent_name = _extract_name_candidate(msg_only)
 
-    # 5. Comma / Delimiter parsing for direct replies (e.g. "Akhil, 7902819158, 12")
+    # Search backwards through user messages in history if not found in current message
+    if not parent_name and history:
+        for h in reversed(history):
+            if not isinstance(h, dict):
+                continue
+            role = (h.get("role") or "").lower()
+            content = (h.get("content") or "").strip()
+            if role in ("user", "human") and content:
+                cand = _extract_name_candidate(content)
+                if cand:
+                    parent_name = cand
+                    break
+
+    # If still not found, check assistant greeting in history (e.g. "Thank you, Akhil.")
+    if not parent_name and history:
+        for h in reversed(history):
+            if not isinstance(h, dict):
+                continue
+            role = (h.get("role") or "").lower()
+            content = (h.get("content") or "").strip()
+            if role in ("assistant", "model", "bot") and content:
+                greet_match = re.search(
+                    r"(?:Thank you|Thanks|Hi|Hello|Dear|Welcome)[,\s]+([A-Za-z]{2,20})\b",
+                    content,
+                    re.IGNORECASE,
+                )
+                if greet_match:
+                    cand = greet_match.group(1).strip()
+                    if cand.lower() not in NON_NAME_WORDS:
+                        parent_name = cand.title()
+                        break
+
+    # 5. Comma / Delimiter fallback for age if present in current message
     tokens = [t.strip() for t in re.split(r"[,;\n|/]", msg_only) if t.strip()]
-    cleaned_tokens = []
     for t in tokens:
-        # If token is phone, skip
-        if phone and re.sub(r"\D", "", t) == re.sub(r"\D", "", phone):
-            continue
-        # If token is email, skip
-        if email and t.lower() == email.lower():
-            continue
-        cleaned_tokens.append(t)
-
-    for t in cleaned_tokens:
-        # Check if token is just age number (e.g. '12' or '4')
         if not child_age and re.fullmatch(r"\d{1,2}", t):
             val = int(t)
             if 1 <= val <= 20:
                 child_age = f"{val} years"
-                continue
-
-        # Check if token is person's name (1 to 3 words, pure alphabetic)
-        if not parent_name and re.fullmatch(r"[A-Za-z\s]{2,30}", t):
-            t_low = t.lower()
-            if t_low not in [
-                "yes", "no", "hi", "hello", "appointment", "assessment", 
-                "speech therapy", "therapy", "general", "okay", "ok", "please", "thanks"
-            ]:
-                parent_name = t.title()
+                break
 
     # 6. Service extraction across message and past conversation history
     interested_service = detect_service(text_corpus)

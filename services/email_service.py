@@ -235,10 +235,18 @@ def test_smtp_connection(cfg: Dict[str, Any], to_email: str) -> Tuple[bool, str,
 
     user_addr = (user or "").strip()
     configured_from = (cfg.get("from_email") or "").strip()
-    if configured_from:
+
+    # For envelope sender, modern mail servers (Zoho, Gmail, etc.) enforce that
+    # the sender address matches the authenticated user or an approved alias.
+    if user_addr and "@" in user_addr:
+        user_domain = user_addr.split("@")[-1].lower()
+        from_domain = configured_from.split("@")[-1].lower() if ("@" in configured_from) else ""
+        if not configured_from or user_domain != from_domain:
+            sender_email = user_addr
+        else:
+            sender_email = configured_from
+    elif configured_from:
         sender_email = configured_from
-    elif user_addr and "@" in user_addr:
-        sender_email = user_addr
     else:
         sender_email = "noreply@thescalecraft.in"
 
@@ -278,6 +286,9 @@ def test_smtp_connection(cfg: Dict[str, Any], to_email: str) -> Tuple[bool, str,
     msg["From"] = formataddr((sender_name, sender_email))
     msg["To"] = to_email
     msg["Message-ID"] = make_msgid(domain=sender_email.split("@")[-1] if "@" in sender_email else None)
+    reply_target = configured_from if (configured_from and "@" in configured_from) else (cfg.get("company_email") or "")
+    if reply_target and reply_target.lower() != sender_email.lower():
+        msg["Reply-To"] = reply_target
     msg.attach(MIMEText(html, "html", "utf-8"))
 
     try:

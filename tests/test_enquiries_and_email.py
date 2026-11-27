@@ -370,4 +370,30 @@ class EnquiriesAndEmailTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_multiturn_name_extraction_across_turns(self):
+        """Verify that when a user provides their name in an earlier turn (e.g. 'Akhil, 790281915')
+        and then provides their valid phone number in a follow-up turn ('7902819158'),
+        extract_lead_info accurately captures the user's name from history rather than falling back to 'Website Visitor'."""
+        from services.gemini import extract_lead_info
+
+        # Turn 1: user sent name + 9 digit number (invalid phone)
+        # Assistant responded acknowledging Akhil
+        history = [
+            {"role": "user", "content": "Akhil, 790281915"},
+            {
+                "role": "assistant",
+                "content": "Thank you, Akhil. It looks like your phone number has 9 digits instead of 10. Could you please share the complete 10-digit contact number?",
+            },
+        ]
+
+        # Turn 2: user sends only 10-digit number
+        lead = extract_lead_info(message="7902819158", history=history)
+        self.assertEqual(lead.get("phone"), "7902819158")
+        self.assertEqual(lead.get("parent_name"), "Akhil")
+
+        # Turn 2 variant: user sends 'My phone is 9876543210'
+        lead2 = extract_lead_info(message="My phone is 9876543210", history=history)
+        self.assertEqual(lead2.get("phone"), "9876543210")
+        self.assertEqual(lead2.get("parent_name"), "Akhil")
+
 
