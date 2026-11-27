@@ -92,6 +92,10 @@ def _get_captured_contact_info(
                 }
     lead = extract_lead_info(message=message_text, history=history_dicts)
     if lead.get("phone") or lead.get("email"):
+        # If the visitor attempted to provide a phone number and it is incomplete (e.g. 7-9 digits),
+        # do not treat contact info as registered until complete
+        if lead.get("incomplete_phone") and not lead.get("phone"):
+            return None
         return {
             "parent_name": lead.get("parent_name") or "Visitor",
             "phone": lead.get("phone"),
@@ -136,6 +140,12 @@ def _capture_or_update_enquiry(
 ) -> Optional[Dict[str, Any]]:
     lead_info = extract_lead_info(message=message_text, history=history_dicts)
     if not (lead_info.get("phone") or lead_info.get("email")):
+        return None
+
+    # If the visitor attempted to provide a phone number and it is incomplete (e.g. 7-9 digits),
+    # do NOT finalize or accept the enquiry with "Phone: Not provided".
+    # Wait until the user provides the complete 10-digit number.
+    if lead_info.get("incomplete_phone") and not lead_info.get("phone"):
         return None
 
     existing_enquiry = (
@@ -186,12 +196,14 @@ def _capture_or_update_enquiry(
             "",
         ):
             existing_enquiry.interested_service = service_name
-        if lead_info.get("phone") and had_no_phone:
-            existing_enquiry.phone = lead_info["phone"]
-            should_dispatch_alert = True
-        if lead_info.get("email") and had_no_email:
-            existing_enquiry.email = lead_info["email"]
-            should_dispatch_alert = True
+        if lead_info.get("phone"):
+            if had_no_phone or existing_enquiry.phone != lead_info["phone"]:
+                existing_enquiry.phone = lead_info["phone"]
+                should_dispatch_alert = True
+        if lead_info.get("email"):
+            if had_no_email or existing_enquiry.email != lead_info["email"]:
+                existing_enquiry.email = lead_info["email"]
+                should_dispatch_alert = True
         existing_enquiry.description = f"{existing_enquiry.description}\nFollow-up: '{message_text[:200]}'"
         db.commit()
         db.refresh(existing_enquiry)

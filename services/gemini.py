@@ -62,6 +62,44 @@ def is_valid_phone_candidate(s: str) -> bool:
         return False
     return True
 
+def is_incomplete_phone_candidate(s: str) -> bool:
+    if not s:
+        return False
+    digits = re.sub(r"\D", "", s)
+    if not (7 <= len(digits) <= 9):
+        return False
+    if len(set(digits)) <= 2:
+        return False
+    clean = s.strip()
+    if clean.startswith(("2020", "2021", "2022", "2023", "2024", "2025", "2026", "2027", "2028")):
+        return False
+    return True
+
+
+def extract_incomplete_phone_candidate(text: str) -> Optional[str]:
+    """Detect if a user attempted to provide a phone number with only 7-9 digits."""
+    if not text:
+        return None
+    # Strip emails so digits in email address are not matched
+    cleaned = re.sub(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", " ", text)
+    # Strip dimensions like 15*15, 10x20
+    cleaned = re.sub(r"\d+\s*[*xX×]\s*\d+", " ", cleaned)
+
+    # 1. Delimiter separated tokens
+    tokens = [t.strip() for t in re.split(r"[,;\n|/]", cleaned) if t.strip()]
+    for t in tokens:
+        if is_incomplete_phone_candidate(t):
+            return re.sub(r"[^\d+]", "", t)
+
+    # 2. Regex matching phone-like numbers with 7-9 digits
+    candidates = re.finditer(r"(\+?[1-9]\d{0,3}[-.\s]?)?\(?\d{2,5}\)?[-.\s]?\d{2,4}[-.\s]?\d{1,4}", cleaned)
+    for m in candidates:
+        raw = m.group(0).strip()
+        if is_incomplete_phone_candidate(raw):
+            return raw
+    return None
+
+
 def extract_phone_candidate(text: str) -> Optional[str]:
     # Look for candidates matching phone patterns (supports +country code, brackets, hyphens, spaces)
     candidates = re.finditer(r"(\+?[1-9]\d{0,3}[-.\s]?)?\(?\d{2,5}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,5}", text)
@@ -137,6 +175,9 @@ def extract_lead_info(
 
     # 1. Phone extraction with strict validation
     phone = extract_phone_candidate(text_corpus)
+    incomplete_phone = None
+    if not phone:
+        incomplete_phone = extract_incomplete_phone_candidate(msg_only) or extract_incomplete_phone_candidate(text_corpus)
 
     # 2. Email extraction
     email_match = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", text_corpus)
@@ -204,6 +245,7 @@ def extract_lead_info(
 
     return {
         "phone": phone,
+        "incomplete_phone": incomplete_phone,
         "email": email,
         "child_age": child_age,
         "parent_name": parent_name,
@@ -879,8 +921,23 @@ class GeminiService:
                 f"- If the visitor requests a callback, appointment, or asks 'can i get a call back', CONFIRM that their callback request is already noted and our team at {org_label} will reach out to them at {c_phone} shortly. Ask if there are specific requirements they want to discuss on the call.\n\n"
             )
 
+        incomplete_banner = ""
+        if not has_captured_contact:
+            inc_phone = extract_incomplete_phone_candidate(user_message)
+            if inc_phone:
+                inc_digits = re.sub(r"\D", "", inc_phone)
+                count_str = f"{len(inc_digits)} digits" if inc_digits else "an incomplete number"
+                c_cand_name = _extract_name_candidate(user_message) or "the visitor"
+                incomplete_banner = (
+                    "=== INCOMPLETE PHONE NUMBER DETECTED (MANDATORY INSTRUCTION) ===\n"
+                    f"- The customer attempted to share their phone number ('{inc_phone}'), but it contains only {count_str} instead of the required 10 digits.\n"
+                    f"- CRITICAL REQUIREMENT: You MUST politely point out to {c_cand_name} that their contact number appears to have only {count_str}, and ask them in ONE concise sentence to provide the complete 10-digit phone number so {org_label} can prepare and deliver their quotation / reach out to them.\n"
+                    "- DO NOT confirm that their contact details or enquiry is fully registered or submitted until the complete 10-digit number is provided.\n\n"
+                )
+
         layer_7 = (
             f"{contact_banner}"
+            f"{incomplete_banner}"
             f"=== LAYER 7: RECENT CONVERSATION HISTORY & CURRENT MESSAGE ===\n"
             f"Recent Conversation History:\n{history_str}\n\n"
             f"Current Customer Message:\n{user_message}"
@@ -1037,6 +1094,20 @@ class GeminiService:
                 "- Answer their questions directly, accurately, and politely based on the knowledge base.\n\n"
             )
 
+        incomplete_banner = ""
+        if not has_captured_contact:
+            inc_phone = extract_incomplete_phone_candidate(user_message)
+            if inc_phone:
+                inc_digits = re.sub(r"\D", "", inc_phone)
+                count_str = f"{len(inc_digits)} digits" if inc_digits else "an incomplete number"
+                c_cand_name = _extract_name_candidate(user_message) or "the visitor"
+                incomplete_banner = (
+                    "=== INCOMPLETE PHONE NUMBER DETECTED (MANDATORY INSTRUCTION) ===\n"
+                    f"- The customer attempted to share their phone number ('{inc_phone}'), but it contains only {count_str} instead of the required 10 digits.\n"
+                    f"- CRITICAL REQUIREMENT: You MUST politely inform {c_cand_name} that their contact number has only {count_str}, and ask them in ONE clear sentence to provide the complete 10-digit phone number so {org_label} can prepare and deliver their quotation / reach out to them.\n"
+                    "- DO NOT confirm that their contact details or quotation request is fully registered or submitted until the complete 10-digit number is provided.\n\n"
+                )
+
         full_prompt = (
             f"SYSTEM INSTRUCTIONS:\n{base_instructions}\n\n"
             f"{grounding_instruction}\n"
@@ -1044,6 +1115,7 @@ class GeminiService:
             f"{language_instruction}\n"
             f"ORGANIZATIONAL KNOWLEDGE RETRIEVED ({org_label}):\n{context_text}\n\n"
             f"{contact_banner}"
+            f"{incomplete_banner}"
             f"RECENT CONVERSATION HISTORY:\n{history_str}\n\n"
             f"CURRENT CUSTOMER MESSAGE:\n{user_message}\n\n"
             f"Please respond concisely (under 80 words) {closing_lang_hint}:"

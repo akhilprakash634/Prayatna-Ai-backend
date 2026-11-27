@@ -453,5 +453,70 @@ class EnquiriesAndEmailTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_incomplete_phone_not_accepted_as_missing_and_prompts_user(self):
+        """Verify that when a user provides an incomplete phone number (e.g. 9 digits '790281915')
+        along with other details (e.g. email, dimensions), the enquiry is NOT finalized as 'Phone: Not provided',
+        and the prompt instructs the assistant to ask for the complete 10-digit number."""
+        from services.gemini import extract_lead_info, gemini_service
+        from routes.chat import _capture_or_update_enquiry
+
+        msg = "15*15 , Akhil, scalecraft, akhil@thescalecraft.in, 790281915"
+        lead = extract_lead_info(message=msg)
+        self.assertIsNone(lead.get("phone"))
+        self.assertEqual(lead.get("incomplete_phone"), "790281915")
+        self.assertEqual(lead.get("email"), "akhil@thescalecraft.in")
+        self.assertEqual(lead.get("parent_name"), "Akhil")
+
+        # 1. Enquiry should NOT be captured with Phone: Not provided
+        db = self.database.SessionLocal()
+        try:
+            org = db.query(self.models.Organization).first()
+            conv = self.models.Conversation(organization_id=org.id)
+            db.add(conv)
+            db.commit()
+
+            captured = _capture_or_update_enquiry(
+                db=db,
+                organization_id=org.id,
+                conversation_id=conv.id,
+                conversation_category="air_freight",
+                message_text=msg,
+                history_dicts=[],
+                intent="general",
+            )
+            self.assertIsNone(captured)  # Must be None so no incomplete enquiry card is shown!
+
+            # 2. Prompt builder must instruct AI to ask for 10-digit number
+            prompt, _ = gemini_service._build_full_prompt(
+                user_message=msg,
+                retrieved_chunks=[],
+                conversation_history=[],
+                organization_name="Right Logistics",
+                contact_info_captured=None,
+            )
+            self.assertIn("INCOMPLETE PHONE NUMBER DETECTED", prompt)
+            self.assertIn("790281915", prompt)
+
+            # 3. When the user sends complete 10 digits in follow-up, it updates and captures successfully
+            followup_msg = "update contact number 7902819158"
+            lead_followup = extract_lead_info(message=followup_msg, history=[{"role": "user", "content": msg}])
+            self.assertEqual(lead_followup.get("phone"), "7902819158")
+            self.assertEqual(lead_followup.get("email"), "akhil@thescalecraft.in")
+
+            captured_complete = _capture_or_update_enquiry(
+                db=db,
+                organization_id=org.id,
+                conversation_id=conv.id,
+                conversation_category="air_freight",
+                message_text=followup_msg,
+                history_dicts=[{"role": "user", "content": msg}],
+                intent="general",
+            )
+            self.assertIsNotNone(captured_complete)
+            self.assertEqual(captured_complete["phone"], "7902819158")
+            self.assertEqual(captured_complete["email"], "akhil@thescalecraft.in")
+        finally:
+            db.close()
+
 
 
