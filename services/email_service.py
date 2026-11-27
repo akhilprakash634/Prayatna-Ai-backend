@@ -587,6 +587,10 @@ def dispatch_lead_alert(
             recipients.append(admin_user.email.strip().lower())
 
         is_enabled = org_email_cfg.get("enabled", True)
+        # If the organization has custom SMTP credentials configured, guarantee that lead alerts are active
+        if org_email_cfg.get("smtp_host") and org_email_cfg.get("smtp_user"):
+            is_enabled = True
+
         if recipients and is_enabled:
             logger.info(
                 "Dispatching lead alert for enquiry '%s' from %s to %d recipient(s): %s",

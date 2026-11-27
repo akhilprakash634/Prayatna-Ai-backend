@@ -376,8 +376,12 @@ def get_email_service_config(
     smtp_user_val = cfg.get("smtp_user")
     from_email_val = cfg.get("from_email") or (smtp_user_val if smtp_user_val and "@" in smtp_user_val else comp_email)
 
+    is_enabled_val = cfg.get("enabled")
+    if is_enabled_val is None or (cfg.get("smtp_host") and smtp_user_val and is_enabled_val is False):
+        is_enabled_val = True
+
     return EmailServiceConfig(
-        enabled=cfg.get("enabled", True),
+        enabled=is_enabled_val,
         company_email=comp_email,
         additional_emails=cfg.get("additional_emails", []),
         provider=cfg.get("provider", "system_default"),

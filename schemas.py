@@ -145,7 +145,7 @@ class EnquiryResponse(BaseModel):
 
 # Business-wide Email Service Schemas
 class EmailServiceConfig(BaseModel):
-    enabled: bool = False
+    enabled: bool = True
     company_email: Optional[str] = None
     additional_emails: List[str] = Field(default_factory=list)
     provider: str = "system_default"  # system_default, gmail, office365, smtp_custom
