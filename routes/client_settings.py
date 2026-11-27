@@ -443,6 +443,16 @@ def update_email_service_config(
     if req.from_email is not None:
         current_cfg["from_email"] = req.from_email.strip().lower() or None
 
+    # For providers like Zoho and Gmail, if from_email domain does not match authenticated smtp_user,
+    # default from_email to smtp_user to prevent '550 5.7.1 Sender is not allowed to relay emails'
+    u_val = current_cfg.get("smtp_user")
+    f_val = current_cfg.get("from_email")
+    if u_val and "@" in u_val:
+        u_domain = u_val.split("@")[-1].lower()
+        f_domain = f_val.split("@")[-1].lower() if (f_val and "@" in f_val) else ""
+        if not f_val or u_domain != f_domain:
+            current_cfg["from_email"] = u_val
+
     org.email_config_json = json.dumps(current_cfg)
     db.commit()
     db.refresh(org)
@@ -450,6 +460,7 @@ def update_email_service_config(
     has_pw = bool(current_cfg.get("smtp_password"))
     masked_pw = "••••••••" if has_pw else None
     comp_email = current_cfg.get("company_email") or ctx.user.email
+    default_from = current_cfg.get("smtp_user") or comp_email
 
     return EmailServiceConfig(
         enabled=current_cfg.get("enabled", True),
@@ -463,7 +474,7 @@ def update_email_service_config(
         has_password=has_pw,
         smtp_encryption=current_cfg.get("smtp_encryption", "tls"),
         from_name=current_cfg.get("from_name") or org.name,
-        from_email=current_cfg.get("from_email") or comp_email,
+        from_email=current_cfg.get("from_email") or default_from,
     )
 
 

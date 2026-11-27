@@ -109,63 +109,19 @@ def _dispatch_enquiry_alert(
     """
     Dispatch email notification alert to organization recipients for newly captured or newly contactable lead.
     """
-    try:
-        from threading import Thread
-        from models import ChatbotSetting, Organization, User
-        from services.email_service import resolve_org_smtp_config, send_lead_alert_email
-        from services.tenant import resolve_chatbot_theme_config
+    from services.email_service import dispatch_lead_alert
 
-        org = db.query(Organization).filter(Organization.id == organization_id).first()
-        setting = db.query(ChatbotSetting).filter(ChatbotSetting.organization_id == organization_id).first()
-        admin_user = db.query(User).filter(User.organization_id == organization_id, User.role == "client_admin").first()
-        theme_cfg = resolve_chatbot_theme_config(org, setting)
-
-        org_email_cfg: dict = {}
-        if org and org.email_config_json:
-            try:
-                org_email_cfg = json.loads(org.email_config_json)
-            except Exception:
-                org_email_cfg = {}
-        resolved_smtp = resolve_org_smtp_config(org_email_cfg)
-
-        recipients = []
-        if org_email_cfg.get("company_email"):
-            recipients.append(org_email_cfg["company_email"].strip().lower())
-        if org_email_cfg.get("additional_emails"):
-            for em in org_email_cfg["additional_emails"]:
-                if em and "@" in em and em not in recipients:
-                    recipients.append(em.strip().lower())
-
-        if not recipients and theme_cfg.get("notification_email"):
-            recipients.append(theme_cfg["notification_email"].strip().lower())
-        if not recipients and admin_user and admin_user.email:
-            recipients.append(admin_user.email.strip().lower())
-
-        if recipients and theme_cfg.get("lead_notifications_enabled", True):
-            lead_payload = {
-                "parent_name": enquiry.parent_name,
-                "phone": enquiry.phone,
-                "email": enquiry.email,
-                "interested_service": enquiry.interested_service,
-                "category": enquiry.category,
-                "description": enquiry.description,
-                "preferred_contact": enquiry.preferred_contact,
-            }
-            logger.info("Captured lead from %s: enquiry_id=%s. Dispatching lead alert email to %d recipient(s): %s", source_label, enquiry.id, len(recipients), recipients)
-            for rcpt in recipients:
-                Thread(
-                    target=send_lead_alert_email,
-                    kwargs={
-                        "admin_email": rcpt,
-                        "org_name": org.name if org else "Your Organization",
-                        "enquiry_data": lead_payload,
-                        "bot_name": setting.bot_name if setting else None,
-                        "smtp_config": resolved_smtp,
-                    },
-                    daemon=True,
-                ).start()
-    except Exception as e:
-        logger.error("Failed to dispatch lead alert email from %s: %s", source_label, e, exc_info=True)
+    lead_payload = {
+        "id": getattr(enquiry, "id", None),
+        "parent_name": enquiry.parent_name,
+        "phone": enquiry.phone,
+        "email": enquiry.email,
+        "interested_service": enquiry.interested_service,
+        "category": enquiry.category,
+        "description": enquiry.description,
+        "preferred_contact": enquiry.preferred_contact,
+    }
+    dispatch_lead_alert(db, organization_id, lead_payload, source_label=source_label)
 
 
 def _capture_or_update_enquiry(

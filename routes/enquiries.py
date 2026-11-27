@@ -18,6 +18,7 @@ from schemas import (
     EnquiryUpdate,
 )
 from services.email_service import (
+    dispatch_lead_alert,
     resolve_org_smtp_config,
     send_enquiry_reply_email,
     send_lead_alert_email,
@@ -96,58 +97,21 @@ def create_enquiry(
     db.refresh(new_enquiry)
 
     # Dispatch lead notification email if enabled and actionable
-    try:
-        setting = db.query(ChatbotSetting).filter(ChatbotSetting.organization_id == org.id).first()
-        theme_cfg = resolve_chatbot_theme_config(org, setting)
-
-        org_email_cfg: dict = {}
-        if org.email_config_json:
-            try:
-                org_email_cfg = json.loads(org.email_config_json)
-            except Exception:
-                org_email_cfg = {}
-
-        resolved_smtp = resolve_org_smtp_config(org_email_cfg)
-
-        admin_user = (
-            db.query(User)
-            .filter(User.organization_id == org.id, User.role == "client_admin")
-            .first()
-        )
-        recipients = []
-        if org_email_cfg.get("company_email"):
-            recipients.append(org_email_cfg["company_email"].strip().lower())
-        if org_email_cfg.get("additional_emails"):
-            for em in org_email_cfg["additional_emails"]:
-                if em and "@" in em and em not in recipients:
-                    recipients.append(em.strip().lower())
-
-        if not recipients and theme_cfg.get("notification_email"):
-            recipients.append(theme_cfg["notification_email"].strip().lower())
-        if not recipients and admin_user and admin_user.email:
-            recipients.append(admin_user.email.strip().lower())
-
-        if recipients and theme_cfg.get("lead_notifications_enabled", True):
-            logger.info("Dispatching lead alert email for enquiry %s to %d recipient(s): %s", new_enquiry.id, len(recipients), recipients)
-            for rcpt in recipients:
-                background_tasks.add_task(
-                    send_lead_alert_email,
-                    admin_email=rcpt,
-                    org_name=org.name,
-                    enquiry_data={
-                        "parent_name": new_enquiry.parent_name,
-                        "phone": new_enquiry.phone,
-                        "email": new_enquiry.email,
-                        "interested_service": new_enquiry.interested_service,
-                        "category": new_enquiry.category,
-                        "description": new_enquiry.description,
-                        "preferred_contact": new_enquiry.preferred_contact,
-                    },
-                    bot_name=setting.bot_name if setting else None,
-                    smtp_config=resolved_smtp,
-                )
-    except Exception as e:
-        logger.error("Failed to dispatch lead notification email for enquiry %s: %s", getattr(new_enquiry, 'id', 'unknown'), e, exc_info=True)
+    dispatch_lead_alert(
+        db=db,
+        organization_id=org.id,
+        enquiry_data={
+            "id": new_enquiry.id,
+            "parent_name": new_enquiry.parent_name,
+            "phone": new_enquiry.phone,
+            "email": new_enquiry.email,
+            "interested_service": new_enquiry.interested_service,
+            "category": new_enquiry.category,
+            "description": new_enquiry.description,
+            "preferred_contact": new_enquiry.preferred_contact,
+        },
+        source_label="chat enquiry form",
+    )
 
     return new_enquiry
 

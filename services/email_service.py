@@ -85,8 +85,15 @@ def resolve_org_smtp_config(
 
         user = (cfg.get("smtp_user") or "").strip() or None
         from_email = (cfg.get("from_email") or "").strip()
-        if not from_email:
-            from_email = user if (user and "@" in user) else base["from_email"]
+        # For authenticated SMTP (Zoho, Gmail, etc.), the envelope sender address
+        # MUST match the authenticated user domain to prevent 550 Relay Access Denied errors.
+        if user and "@" in user:
+            u_domain = user.split("@")[-1].lower()
+            f_domain = from_email.split("@")[-1].lower() if (from_email and "@" in from_email) else ""
+            if not from_email or u_domain != f_domain:
+                from_email = user
+        elif not from_email:
+            from_email = base["from_email"]
         from_name = (cfg.get("from_name") or base["from_name"]).strip()
 
         return {
@@ -144,10 +151,15 @@ def send_email(
 
     # For envelope sender, modern mail servers (Zoho, Gmail, etc.) enforce that
     # the sender address matches the authenticated user or an approved alias.
-    if configured_from:
+    if user_addr and "@" in user_addr:
+        user_domain = user_addr.split("@")[-1].lower()
+        from_domain = configured_from.split("@")[-1].lower() if ("@" in configured_from) else ""
+        if not configured_from or user_domain != from_domain:
+            sender_email = user_addr
+        else:
+            sender_email = configured_from
+    elif configured_from:
         sender_email = configured_from
-    elif user_addr and "@" in user_addr:
-        sender_email = user_addr
     else:
         sender_email = "noreply@thescalecraft.in"
 
@@ -435,13 +447,14 @@ Notes:
 
 View in dashboard: {app_url}/admin/enquiries
 """
+    from_name = (smtp_config.get("from_name") if smtp_config and smtp_config.get("from_name") else None) or org_name
     reply_to = email if (email and "@" in email and email != "Not provided") else None
     return send_email(
         to_email=admin_email,
         subject=subject,
         html_content=html,
         text_content=text,
-        from_name=org_name,
+        from_name=from_name,
         reply_to=reply_to,
         smtp_config=smtp_config,
     )
@@ -504,3 +517,83 @@ def send_enquiry_reply_email(
         reply_to=admin_reply_to,
         smtp_config=smtp_config,
     )
+
+
+def dispatch_lead_alert(
+    db: Any,
+    organization_id: str,
+    enquiry_data: Dict[str, Any],
+    source_label: str = "chat",
+) -> None:
+    """
+    Unified lead alert dispatcher.
+    Resolves company notification recipients, organization SMTP config, and safely
+    dispatches alert emails via a background daemon thread.
+    """
+    try:
+        from threading import Thread
+        from models import ChatbotSetting, Organization, User
+        from services.tenant import resolve_chatbot_theme_config
+
+        org = db.query(Organization).filter(Organization.id == organization_id).first()
+        setting = db.query(ChatbotSetting).filter(ChatbotSetting.organization_id == organization_id).first()
+        admin_user = (
+            db.query(User)
+            .filter(User.organization_id == organization_id, User.role == "client_admin")
+            .first()
+        )
+        theme_cfg = resolve_chatbot_theme_config(org, setting) if org and setting else {}
+
+        org_email_cfg: dict = {}
+        if org and org.email_config_json:
+            try:
+                org_email_cfg = json.loads(org.email_config_json)
+            except Exception:
+                org_email_cfg = {}
+
+        resolved_smtp = resolve_org_smtp_config(org_email_cfg)
+
+        recipients = []
+        if org_email_cfg.get("company_email"):
+            recipients.append(org_email_cfg["company_email"].strip().lower())
+        if org_email_cfg.get("additional_emails"):
+            for em in org_email_cfg["additional_emails"]:
+                if em and "@" in em and em.strip().lower() not in recipients:
+                    recipients.append(em.strip().lower())
+
+        if not recipients and theme_cfg.get("notification_email"):
+            recipients.append(theme_cfg["notification_email"].strip().lower())
+        if not recipients and admin_user and admin_user.email:
+            recipients.append(admin_user.email.strip().lower())
+        if not recipients and org_email_cfg.get("smtp_user") and "@" in org_email_cfg["smtp_user"]:
+            recipients.append(org_email_cfg["smtp_user"].strip().lower())
+
+        is_enabled = org_email_cfg.get("enabled", True)
+        if recipients and is_enabled:
+            logger.info(
+                "Dispatching lead alert for enquiry '%s' from %s to %d recipient(s): %s",
+                enquiry_data.get("id"),
+                source_label,
+                len(recipients),
+                recipients,
+            )
+            for rcpt in recipients:
+                Thread(
+                    target=send_lead_alert_email,
+                    kwargs={
+                        "admin_email": rcpt,
+                        "org_name": org.name if org else "Your Organization",
+                        "enquiry_data": enquiry_data,
+                        "bot_name": setting.bot_name if setting else None,
+                        "smtp_config": resolved_smtp,
+                    },
+                    daemon=True,
+                ).start()
+        else:
+            logger.warning(
+                "Lead alert not dispatched: recipients=%s, is_enabled=%s",
+                recipients,
+                is_enabled,
+            )
+    except Exception as e:
+        logger.error("Failed to dispatch lead alert email from %s: %s", source_label, e, exc_info=True)

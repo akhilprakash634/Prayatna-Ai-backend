@@ -317,4 +317,57 @@ class EnquiriesAndEmailTests(unittest.TestCase):
         )
         self.assertNotIn("VISITOR CONTACT DETAILS ALREADY REGISTERED", prompt_without_contact)
 
+    def test_smtp_sender_domain_alignment_and_lead_alert_dispatch(self):
+        """Verify that when smtp_user and from_email have mismatched domains (e.g. Zoho relay rule),
+        the sender email automatically normalizes to the authenticated user to prevent 550 relay errors,
+        and dispatch_lead_alert delivers to company_email without dropping the lead."""
+        from services.email_service import resolve_org_smtp_config, dispatch_lead_alert
+
+        # 1. Config with mismatched from_email (e.g. company domain vs Zoho account)
+        raw_cfg = {
+            "provider": "zoho",
+            "smtp_host": "smtp.zoho.in",
+            "smtp_port": 465,
+            "smtp_encryption": "ssl",
+            "smtp_user": "sales@growyourbusiness.today",
+            "smtp_password": "app-password-123",
+            "from_name": "Right Logistics",
+            "from_email": "prince@rightlogistics.in",
+            "company_email": "prince@rightlogistics.in",
+            "enabled": True,
+        }
+        resolved = resolve_org_smtp_config(raw_cfg)
+        self.assertEqual(resolved["from_email"], "sales@growyourbusiness.today")
+        self.assertEqual(resolved["from_name"], "Right Logistics")
+
+        # 2. Test lead alert dispatch
+        client = TestClient(self.main.app)
+        db = self.database.SessionLocal()
+        try:
+            org = db.query(self.models.Organization).filter(self.models.Organization.slug == "prayatna").first()
+            import json
+            org.email_config_json = json.dumps(raw_cfg)
+            db.commit()
+
+            with patch("services.email_service.send_email", return_value=True) as mock_send:
+                lead_data = {
+                    "id": "lead-123",
+                    "parent_name": "Amit Kumar",
+                    "phone": "+91 9876543210",
+                    "email": "amit@example.com",
+                    "interested_service": "Air Freight",
+                    "description": "Shipping rate request",
+                }
+                dispatch_lead_alert(db, org.id, lead_data, source_label="unit test")
+
+                import time
+                time.sleep(0.1)  # Allow daemon thread to run
+                self.assertTrue(mock_send.called)
+                args, kwargs = mock_send.call_args
+                self.assertEqual(kwargs.get("to_email"), "prince@rightlogistics.in")
+                self.assertEqual(kwargs.get("from_name"), "Right Logistics")
+                self.assertEqual(kwargs.get("smtp_config")["from_email"], "sales@growyourbusiness.today")
+        finally:
+            db.close()
+
 
