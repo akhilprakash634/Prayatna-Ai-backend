@@ -1,13 +1,13 @@
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from database import SessionLocal, get_db
-from models import AgentSetting, Conversation, ConversationFlow, Enquiry, Message, utc_now
+from models import AgentSetting, ChatbotSetting, Conversation, ConversationFlow, Enquiry, Message, Organization, utc_now
 from schemas import ChatRequest, ChatResponse, PublicChatbotConfig, SourceCitation
 from services.gemini import detect_intent, extract_lead_info, gemini_service, generate_suggested_queries
 from services.rag import rag_service
@@ -40,6 +40,134 @@ def _build_sources(retrieved_chunks: List[Dict[str, Any]], org_name: str, org_we
     return sources
 
 
+def _resolve_tenant_for_chat(
+    db: Session,
+    chatbot_id: Optional[str] = None,
+    conversation_id: Optional[str] = None,
+) -> Tuple[Organization, ChatbotSetting]:
+    """
+    Resolve organization and chatbot setting for a chat request.
+    Prioritizes explicit chatbot_id through resolve_public_chatbot (enforcing active/suspension checks),
+    falls back to conversation's owner organization if chatbot_id is omitted, and finally default chatbot.
+    """
+    clean_bot_id = (chatbot_id or "").strip()
+    if clean_bot_id:
+        return resolve_public_chatbot(db, clean_bot_id)
+
+    if conversation_id:
+        conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+        if conv:
+            setting = db.query(ChatbotSetting).filter(ChatbotSetting.organization_id == conv.organization_id).first()
+            if setting and setting.chatbot_id:
+                return resolve_public_chatbot(db, setting.chatbot_id)
+
+    return resolve_public_chatbot(db, None)
+
+
+def _get_captured_contact_info(
+    db: Session,
+    organization_id: str,
+    conversation_id: Optional[str],
+    message_text: str,
+    history_dicts: List[Dict[str, str]],
+) -> Optional[Dict[str, Any]]:
+    """
+    Check if visitor contact info has already been provided either in database enquiry
+    records or in recent conversation history/current message.
+    """
+    if conversation_id:
+        existing_enq = (
+            db.query(Enquiry)
+            .filter(Enquiry.conversation_id == conversation_id, Enquiry.organization_id == organization_id)
+            .first()
+        )
+        if existing_enq:
+            phone_val = existing_enq.phone if existing_enq.phone not in ("Not provided", "", None) else None
+            email_val = existing_enq.email if existing_enq.email not in ("Not provided", "", None) else None
+            if phone_val or email_val:
+                return {
+                    "parent_name": existing_enq.parent_name if existing_enq.parent_name not in ("Website Visitor", "Parent / Visitor", "", None) else "Visitor",
+                    "phone": phone_val,
+                    "email": email_val,
+                }
+    lead = extract_lead_info(message=message_text, history=history_dicts)
+    if lead.get("phone") or lead.get("email"):
+        return {
+            "parent_name": lead.get("parent_name") or "Visitor",
+            "phone": lead.get("phone"),
+            "email": lead.get("email"),
+        }
+    return None
+
+
+def _dispatch_enquiry_alert(
+    db: Session,
+    organization_id: str,
+    enquiry: Enquiry,
+    source_label: str = "chat",
+):
+    """
+    Dispatch email notification alert to organization recipients for newly captured or newly contactable lead.
+    """
+    try:
+        from threading import Thread
+        from models import ChatbotSetting, Organization, User
+        from services.email_service import resolve_org_smtp_config, send_lead_alert_email
+        from services.tenant import resolve_chatbot_theme_config
+
+        org = db.query(Organization).filter(Organization.id == organization_id).first()
+        setting = db.query(ChatbotSetting).filter(ChatbotSetting.organization_id == organization_id).first()
+        admin_user = db.query(User).filter(User.organization_id == organization_id, User.role == "client_admin").first()
+        theme_cfg = resolve_chatbot_theme_config(org, setting)
+
+        org_email_cfg: dict = {}
+        if org and org.email_config_json:
+            try:
+                org_email_cfg = json.loads(org.email_config_json)
+            except Exception:
+                org_email_cfg = {}
+        resolved_smtp = resolve_org_smtp_config(org_email_cfg)
+
+        recipients = []
+        if org_email_cfg.get("company_email"):
+            recipients.append(org_email_cfg["company_email"].strip().lower())
+        if org_email_cfg.get("additional_emails"):
+            for em in org_email_cfg["additional_emails"]:
+                if em and "@" in em and em not in recipients:
+                    recipients.append(em.strip().lower())
+
+        if not recipients and theme_cfg.get("notification_email"):
+            recipients.append(theme_cfg["notification_email"].strip().lower())
+        if not recipients and admin_user and admin_user.email:
+            recipients.append(admin_user.email.strip().lower())
+
+        if recipients and theme_cfg.get("lead_notifications_enabled", True):
+            lead_payload = {
+                "parent_name": enquiry.parent_name,
+                "phone": enquiry.phone,
+                "email": enquiry.email,
+                "interested_service": enquiry.interested_service,
+                "category": enquiry.category,
+                "description": enquiry.description,
+                "preferred_contact": enquiry.preferred_contact,
+            }
+            logger.info("Captured lead from %s: enquiry_id=%s. Dispatching lead alert email to %d recipient(s): %s", source_label, enquiry.id, len(recipients), recipients)
+            for rcpt in recipients:
+                Thread(
+                    target=send_lead_alert_email,
+                    kwargs={
+                        "admin_email": rcpt,
+                        "org_name": org.name if org else "Your Organization",
+                        "enquiry_data": lead_payload,
+                        "bot_name": setting.bot_name if setting else None,
+                        "smtp_config": resolved_smtp,
+                    },
+                    daemon=True,
+                ).start()
+    except Exception as e:
+        logger.error("Failed to dispatch lead alert email from %s: %s", source_label, e, exc_info=True)
+
+
 def _capture_or_update_enquiry(
     db: Session,
     organization_id: str,
@@ -68,6 +196,7 @@ def _capture_or_update_enquiry(
             service_name = "General Enquiry"
 
     cat = "payment_support" if intent == "payment_support" else "appointment"
+    should_dispatch_alert = False
 
     if not existing_enquiry:
         existing_enquiry = Enquiry(
@@ -86,66 +215,10 @@ def _capture_or_update_enquiry(
         db.add(existing_enquiry)
         db.commit()
         db.refresh(existing_enquiry)
-
-        # Dispatch background lead alert email for new actionable lead
-        try:
-            import json
-            from threading import Thread
-            from models import ChatbotSetting, Organization, User
-            from services.email_service import resolve_org_smtp_config, send_lead_alert_email
-
-            org = db.query(Organization).filter(Organization.id == organization_id).first()
-            setting = db.query(ChatbotSetting).filter(ChatbotSetting.organization_id == organization_id).first()
-            admin_user = db.query(User).filter(User.organization_id == organization_id, User.role == "client_admin").first()
-            theme_cfg = resolve_chatbot_theme_config(org, setting)
-
-            org_email_cfg: dict = {}
-            if org and org.email_config_json:
-                try:
-                    org_email_cfg = json.loads(org.email_config_json)
-                except Exception:
-                    org_email_cfg = {}
-            resolved_smtp = resolve_org_smtp_config(org_email_cfg)
-
-            recipients = []
-            if org_email_cfg.get("company_email"):
-                recipients.append(org_email_cfg["company_email"].strip().lower())
-            if org_email_cfg.get("additional_emails"):
-                for em in org_email_cfg["additional_emails"]:
-                    if em and "@" in em and em not in recipients:
-                        recipients.append(em.strip().lower())
-
-            if not recipients and theme_cfg.get("notification_email"):
-                recipients.append(theme_cfg["notification_email"].strip().lower())
-            if not recipients and admin_user and admin_user.email:
-                recipients.append(admin_user.email.strip().lower())
-
-            if recipients and theme_cfg.get("lead_notifications_enabled", True):
-                lead_payload = {
-                    "parent_name": existing_enquiry.parent_name,
-                    "phone": existing_enquiry.phone,
-                    "email": existing_enquiry.email,
-                    "interested_service": existing_enquiry.interested_service,
-                    "category": existing_enquiry.category,
-                    "description": existing_enquiry.description,
-                    "preferred_contact": existing_enquiry.preferred_contact,
-                }
-                logger.info("Captured lead from chat: enquiry_id=%s. Dispatching lead alert email to %d recipient(s): %s", existing_enquiry.id, len(recipients), recipients)
-                for rcpt in recipients:
-                    Thread(
-                        target=send_lead_alert_email,
-                        kwargs={
-                            "admin_email": rcpt,
-                            "org_name": org.name if org else "Your Organization",
-                            "enquiry_data": lead_payload,
-                            "bot_name": setting.bot_name if setting else None,
-                            "smtp_config": resolved_smtp,
-                        },
-                        daemon=True,
-                    ).start()
-        except Exception as e:
-            logger.error("Failed to dispatch lead alert email from chat: %s", e, exc_info=True)
+        should_dispatch_alert = True
     else:
+        had_no_phone = existing_enquiry.phone in ("Not provided", "", None)
+        had_no_email = existing_enquiry.email in ("Not provided", "", None)
         if lead_info.get("parent_name") and existing_enquiry.parent_name in ("Website Visitor", "Parent / Visitor", ""):
             existing_enquiry.parent_name = lead_info["parent_name"]
         if lead_info.get("child_age") and not existing_enquiry.child_age:
@@ -157,13 +230,18 @@ def _capture_or_update_enquiry(
             "",
         ):
             existing_enquiry.interested_service = service_name
-        if lead_info.get("phone") and existing_enquiry.phone in ("Not provided", ""):
+        if lead_info.get("phone") and had_no_phone:
             existing_enquiry.phone = lead_info["phone"]
-        if lead_info.get("email") and existing_enquiry.email in ("Not provided", ""):
+            should_dispatch_alert = True
+        if lead_info.get("email") and had_no_email:
             existing_enquiry.email = lead_info["email"]
+            should_dispatch_alert = True
         existing_enquiry.description = f"{existing_enquiry.description}\nFollow-up: '{message_text[:200]}'"
         db.commit()
         db.refresh(existing_enquiry)
+
+    if should_dispatch_alert:
+        _dispatch_enquiry_alert(db, organization_id, existing_enquiry, source_label=source_label)
 
     return {
         "id": existing_enquiry.id,
@@ -197,7 +275,7 @@ def handle_chat(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message cannot be empty.")
 
     public_chat_rate_limiter.check(f"chat:{get_client_ip(request)}:{payload.chatbot_id or 'default'}")
-    org, setting = resolve_public_chatbot(db, payload.chatbot_id)
+    org, setting = _resolve_tenant_for_chat(db, payload.chatbot_id, payload.conversation_id)
 
     conversation = None
     if payload.conversation_id:
@@ -261,6 +339,14 @@ def handle_chat(
         active_agent_cfg.get("agent_name") if active_agent_cfg else None
     ) or setting.assistant_name
 
+    contact_info_captured = _get_captured_contact_info(
+        db=db,
+        organization_id=org.id,
+        conversation_id=conversation.id,
+        message_text=message_text,
+        history_dicts=history_dicts,
+    )
+
     token_usage = {}
     ai_response_text, intent, requires_followup = gemini_service.generate_chat_response(
         user_message=message_text,
@@ -274,6 +360,7 @@ def handle_chat(
         usage_out=token_usage,
         agent_config=active_agent_cfg,
         flow_config=active_flow_cfg,
+        contact_info_captured=contact_info_captured,
     )
 
     if conversation.category in ("general", None) and intent != "general":
@@ -361,7 +448,7 @@ def handle_chat_stream(payload: ChatRequest, request: Request):
 
     db = SessionLocal()
     try:
-        org, setting = resolve_public_chatbot(db, payload.chatbot_id)
+        org, setting = _resolve_tenant_for_chat(db, payload.chatbot_id, payload.conversation_id)
 
         conversation = None
         if payload.conversation_id:
@@ -444,6 +531,13 @@ def handle_chat_stream(payload: ChatRequest, request: Request):
         ) or setting.assistant_name
         custom_instructions = setting.custom_instructions
         stream_theme_cfg = resolve_chatbot_theme_config(org, setting)
+        contact_info_captured = _get_captured_contact_info(
+            db=db,
+            organization_id=org.id,
+            conversation_id=conversation.id,
+            message_text=message_text,
+            history_dicts=history_dicts,
+        )
     finally:
         db.close()
 
@@ -476,6 +570,7 @@ def handle_chat_stream(payload: ChatRequest, request: Request):
                 usage_out=token_usage,
                 agent_config=active_agent_cfg,
                 flow_config=active_flow_cfg,
+                contact_info_captured=contact_info_captured,
             ):
                 assembled_chunks.append(token)
                 chunk_payload = json.dumps({"type": "chunk", "text": token})

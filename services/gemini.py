@@ -49,6 +49,28 @@ def detect_service(corpus: str) -> Optional[str]:
             return service_name
     return None
 
+def is_valid_phone_candidate(s: str) -> bool:
+    if not s:
+        return False
+    digits = re.sub(r"\D", "", s)
+    if len(digits) < 10 or len(digits) > 15:
+        return False
+    if len(set(digits)) <= 2:
+        return False
+    clean = s.strip()
+    if clean.startswith(("2020", "2021", "2022", "2023", "2024", "2025", "2026", "2027", "2028")):
+        return False
+    return True
+
+def extract_phone_candidate(text: str) -> Optional[str]:
+    # Look for candidates matching phone patterns (supports +country code, brackets, hyphens, spaces)
+    candidates = re.finditer(r"(\+?[1-9]\d{0,3}[-.\s]?)?\(?\d{2,5}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,5}", text)
+    for m in candidates:
+        raw = m.group(0).strip()
+        if is_valid_phone_candidate(raw):
+            return raw
+    return None
+
 def extract_lead_info(
     message: str,
     history: Optional[List[Dict[str, str]]] = None,
@@ -67,9 +89,8 @@ def extract_lead_info(
     text_corpus = " ".join(all_texts)
     msg_only = (message or user_message or "").strip()
 
-    # 1. Phone extraction (10+ digits or formatted phone)
-    phone_match = re.search(r"(\+?\d{1,3}[-.\s]?)?\(?\d{3,4}\)?[-.\s]?\d{3}[-.\s]?\d{3,4}", text_corpus)
-    phone = phone_match.group(0).strip() if phone_match and len(re.sub(r"\D", "", phone_match.group(0))) >= 10 else None
+    # 1. Phone extraction with strict validation
+    phone = extract_phone_candidate(text_corpus)
 
     # 2. Email extraction
     email_match = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", text_corpus)
@@ -91,9 +112,16 @@ def extract_lead_info(
     # 4. Parent Name extraction
     parent_name = None
     # Pattern A: e.g. "Name: Akhil", "My name is Akhil", "I am Akhil"
-    name_match = re.search(r"(?:name\s*[:\-]?\s*|my name is\s+|i am\s+|this is\s+)([A-Za-z]+(?:\s+[A-Za-z]+)?)", msg_only, re.IGNORECASE)
+    name_match = re.search(
+        r"(?:name\s*[:\-]?\s*|my name is\s+|i am\s+|this is\s+)([A-Za-z]{2,20}(?:\s+[A-Za-z]{2,20})?)",
+        msg_only,
+        re.IGNORECASE,
+    )
     if name_match:
-        parent_name = name_match.group(1).strip()
+        cand = name_match.group(1).strip()
+        cand = re.sub(r"\b(and|my|the|is|phone|mobile|email|contact|here)\b.*$", "", cand, flags=re.IGNORECASE).strip()
+        if cand:
+            parent_name = cand
 
     # 5. Comma / Delimiter parsing for direct replies (e.g. "Akhil, 7902819158, 12")
     tokens = [t.strip() for t in re.split(r"[,;\n|/]", msg_only) if t.strip()]
@@ -492,6 +520,7 @@ class GeminiService:
         organization_name: Optional[str] = None,
         organization_slug: Optional[str] = None,
         flow_config: Optional[Dict[str, Any]] = None,
+        contact_info_captured: Optional[Dict[str, Any]] = None,
     ) -> Tuple[str, str]:
         """
         Dynamically build the 7-layer system prompt using Agent Studio configuration.
@@ -686,9 +715,18 @@ class GeminiService:
             behaviour_lines.append("- Services: Mention or recommend relevant organization services when aligned with customer requirements.")
         if proactive_guide:
             behaviour_lines.append("- Proactive Guidance: Proactively guide the visitor to the next logical step.")
-        if collect_info:
+        has_captured_contact = bool(contact_info_captured and (contact_info_captured.get("phone") or contact_info_captured.get("email")))
+        if has_captured_contact:
+            c_name = contact_info_captured.get("parent_name") or "Visitor"
+            c_phone = contact_info_captured.get("phone") or "Provided"
+            c_email = contact_info_captured.get("email") or ""
             behaviour_lines.append(
-                "- Lead Capture: If the customer asks to book, schedule, visit, or request a callback, answer their factual questions first, then politely invite them in ONE sentence to share their Name and Phone number."
+                f"- Lead Capture (ALREADY REGISTERED): Contact details for {c_name} (Phone: {c_phone}{f', Email: {c_email}' if c_email else ''}) are ALREADY safely captured in this session. "
+                "CRITICAL MANDATORY INSTRUCTION: DO NOT ask for the customer's phone number, email, or contact details again under any circumstances. Answer their questions directly without prompting for contact details."
+            )
+        elif collect_info:
+            behaviour_lines.append(
+                "- Lead Capture: If the customer asks to book, schedule, visit, or request a callback, answer their factual questions first, then politely invite them in ONE sentence to share their Name and a valid 10-digit Phone number."
             )
         else:
             behaviour_lines.append("- Lead Capture: Do NOT prompt for contact details unless specifically requested by the customer.")
@@ -777,7 +815,22 @@ class GeminiService:
             history_formatted.append(f"{role}: {msg.get('content', '')}")
         history_str = "\n".join(history_formatted) if history_formatted else "No prior messages in conversation."
 
+        contact_banner = ""
+        if has_captured_contact:
+            c_name = contact_info_captured.get("parent_name") or "Visitor"
+            c_phone = contact_info_captured.get("phone") or "Provided"
+            c_email = contact_info_captured.get("email") or ""
+            email_line = f"- Contact Email: {c_email}\n" if c_email else ""
+            contact_banner = (
+                "=== VISITOR CONTACT DETAILS ALREADY REGISTERED (STRICT RULE) ===\n"
+                f"- Customer Name: {c_name}\n"
+                f"- Contact Phone: {c_phone}\n"
+                f"{email_line}"
+                "- STRICT INSTRUCTION: The visitor has ALREADY provided their contact details. DO NOT ask for their contact details, phone number, or email again. Answer their questions directly without asking for phone/email.\n\n"
+            )
+
         layer_7 = (
+            f"{contact_banner}"
             f"=== LAYER 7: RECENT CONVERSATION HISTORY & CURRENT MESSAGE ===\n"
             f"Recent Conversation History:\n{history_str}\n\n"
             f"Current Customer Message:\n{user_message}"
@@ -808,6 +861,7 @@ class GeminiService:
         custom_instructions: Optional[str] = None,
         agent_config: Optional[Dict[str, Any]] = None,
         flow_config: Optional[Dict[str, Any]] = None,
+        contact_info_captured: Optional[Dict[str, Any]] = None,
     ) -> Tuple[str, str]:
         """Build full prompt & fallback context string scoped strictly to the tenant organization."""
         # When Agent Studio settings are provided, use the dynamic 7-layer engine
@@ -821,6 +875,7 @@ class GeminiService:
                 organization_name=organization_name,
                 organization_slug=organization_slug,
                 flow_config=flow_config,
+                contact_info_captured=contact_info_captured,
             )
 
         # STRICT BACKWARD COMPATIBILITY: Legacy prompt engine when agent_config is absent
@@ -851,14 +906,31 @@ class GeminiService:
         org_label = organization_name or "Prayatna Centre for Child Development"
         ai_label = assistant_name or "Virtual Support Assistant"
 
+        has_captured_contact = bool(contact_info_captured and (contact_info_captured.get("phone") or contact_info_captured.get("email")))
+        if has_captured_contact:
+            c_name = contact_info_captured.get("parent_name") or "Visitor"
+            c_phone = contact_info_captured.get("phone") or "Provided"
+            c_email = contact_info_captured.get("email") or ""
+            lead_prompt_rule = (
+                f"- CONTACT DETAILS ALREADY REGISTERED: The customer's details (Name: {c_name}, Phone: {c_phone}{f', Email: {c_email}' if c_email else ''}) are ALREADY saved in this session. "
+                "CRITICAL MANDATORY RULE: DO NOT ask for their phone number, email, or contact details again. Answer their questions directly."
+            )
+        else:
+            lead_prompt_rule = (
+                "If the customer wants to schedule an appointment, book a service, or request a callback, answer any specific questions first, "
+                "then ask briefly in ONE sentence for their Name and a valid 10-digit Phone Number."
+            )
+
         if is_prayatna:
             base_instructions = self.system_prompt
+            if has_captured_contact:
+                base_instructions += f"\n\nSTRICT: The visitor has already provided contact details ({contact_info_captured.get('phone')}). Do NOT ask for their phone number or contact info again."
         else:
             base_instructions = (
                 f"You are {ai_label}, the virtual support assistant for {org_label}.\n"
                 f"Your role is to assist visitors and customers with concise, accurate, and polite answers using ONLY {org_label}'s knowledge base below.\n"
                 f"Never mention any other organization or external clinic. Never diagnose medical conditions or request OTPs/CVVs/passwords.\n"
-                f"If the customer wants to schedule an appointment, book a service, or request a callback, answer any specific questions first, then ask briefly in ONE sentence for their Name, Phone Number, and requirement."
+                f"{lead_prompt_rule}"
             )
 
         if custom_instructions and custom_instructions.strip():
@@ -896,12 +968,29 @@ class GeminiService:
             "- End with ONE brief call to action or question if needed.\n"
         )
 
+        contact_banner = ""
+        if has_captured_contact:
+            c_name = contact_info_captured.get("parent_name") or "Visitor"
+            c_phone = contact_info_captured.get("phone") or "Provided"
+            c_email = contact_info_captured.get("email") or ""
+            email_line = f"- Contact Email: {c_email}\n" if c_email else ""
+            contact_banner = (
+                "=== VISITOR CONTACT DETAILS ALREADY REGISTERED (STRICT RULE) ===\n"
+                f"- Customer Name: {c_name}\n"
+                f"- Contact Phone: {c_phone}\n"
+                f"{email_line}"
+                "- MANDATORY CONSTRAINT: The visitor has ALREADY shared their contact details earlier in this conversation.\n"
+                "- NEVER ask the visitor for their phone number, mobile number, email, or name again.\n"
+                "- Answer their questions directly, accurately, and politely based on the knowledge base.\n\n"
+            )
+
         full_prompt = (
             f"SYSTEM INSTRUCTIONS:\n{base_instructions}\n\n"
             f"{grounding_instruction}\n"
             f"{brevity_instruction}\n"
             f"{language_instruction}\n"
             f"ORGANIZATIONAL KNOWLEDGE RETRIEVED ({org_label}):\n{context_text}\n\n"
+            f"{contact_banner}"
             f"RECENT CONVERSATION HISTORY:\n{history_str}\n\n"
             f"CURRENT CUSTOMER MESSAGE:\n{user_message}\n\n"
             f"Please respond concisely (under 80 words) {closing_lang_hint}:"
@@ -921,6 +1010,7 @@ class GeminiService:
         usage_out: Optional[Dict[str, Any]] = None,
         agent_config: Optional[Dict[str, Any]] = None,
         flow_config: Optional[Dict[str, Any]] = None,
+        contact_info_captured: Optional[Dict[str, Any]] = None,
     ) -> Tuple[str, str, bool]:
         """
         Generate response using Gemini API or friendly fallback in user's preferred language.
@@ -931,6 +1021,10 @@ class GeminiService:
 
         if not self._client and os.getenv("GEMINI_API_KEY"):
             self._init_client()
+
+        has_captured_contact = bool(
+            contact_info_captured and (contact_info_captured.get("phone") or contact_info_captured.get("email"))
+        )
 
         full_prompt, org_label = self._build_full_prompt(
             user_message=user_message,
@@ -943,6 +1037,7 @@ class GeminiService:
             custom_instructions=custom_instructions,
             agent_config=agent_config,
             flow_config=flow_config,
+            contact_info_captured=contact_info_captured,
         )
 
         if not self._client:
@@ -962,28 +1057,43 @@ class GeminiService:
                 fallback_msg = custom_fallback.strip()
             elif retrieved_chunks:
                 top_source = retrieved_chunks[0]
-                cta_question = (
-                    "Would you like to book an assessment or speak with our coordinator?"
-                    if is_prayatna
-                    else f"Would you like to speak with a representative or learn more about {org_label}?"
-                )
-                fallback_msg = (
-                    f"Hello! Here is what we found from {org_label}:\n\n"
-                    f"{top_source.get('content', '')[:250]}...\n\n"
-                    f"{cta_question} "
-                    f"Please share your Name and Phone Number, and our team will get in touch directly."
-                )
+                if has_captured_contact:
+                    fallback_msg = (
+                        f"Hello! Here is what we found from {org_label}:\n\n"
+                        f"{top_source.get('content', '')[:250]}...\n\n"
+                        "Our team has received your contact details and will follow up with you. "
+                        "How else may we assist you today?"
+                    )
+                else:
+                    cta_question = (
+                        "Would you like to book an assessment or speak with our coordinator?"
+                        if is_prayatna
+                        else f"Would you like to speak with a representative or learn more about {org_label}?"
+                    )
+                    fallback_msg = (
+                        f"Hello! Here is what we found from {org_label}:\n\n"
+                        f"{top_source.get('content', '')[:250]}...\n\n"
+                        f"{cta_question} "
+                        f"Please share your Name and Phone Number, and our team will get in touch directly."
+                    )
             else:
-                cta_fallback = (
-                    "If you would like to book an assessment or learn more, please share your Name and Phone Number."
-                    if is_prayatna
-                    else f"If you would like to connect with {org_label} or request callback, please share your Name and Phone Number."
-                )
-                fallback_msg = (
-                    f"Hello! Welcome to {org_label}.\n\n"
-                    "We are here to assist you with information and enquiries. "
-                    f"{cta_fallback}"
-                )
+                if has_captured_contact:
+                    fallback_msg = (
+                        f"Hello! Welcome to {org_label}.\n\n"
+                        "We are here to assist you with information and enquiries. "
+                        "Our team has your contact details and will be in touch shortly. How else can we help you?"
+                    )
+                else:
+                    cta_fallback = (
+                        "If you would like to book an assessment or learn more, please share your Name and Phone Number."
+                        if is_prayatna
+                        else f"If you would like to connect with {org_label} or request callback, please share your Name and Phone Number."
+                    )
+                    fallback_msg = (
+                        f"Hello! Welcome to {org_label}.\n\n"
+                        "We are here to assist you with information and enquiries. "
+                        f"{cta_fallback}"
+                    )
             return fallback_msg, intent, requires_followup
 
         try:
@@ -1003,10 +1113,16 @@ class GeminiService:
             return response_text, intent, requires_followup
         except Exception as e:
             logger.error(f"Error calling Gemini API: {e}")
-            error_fallback = (
-                f"Thank you for reaching out to {org_label}. We encountered a temporary issue connecting to our AI service. "
-                "Would you like to leave your name and phone number so our team can follow up directly?"
-            )
+            if has_captured_contact:
+                error_fallback = (
+                    f"Thank you for reaching out to {org_label}. We encountered a temporary issue connecting to our AI service. "
+                    "Our team already has your contact details on file and will follow up with you promptly."
+                )
+            else:
+                error_fallback = (
+                    f"Thank you for reaching out to {org_label}. We encountered a temporary issue connecting to our AI service. "
+                    "Would you like to leave your name and phone number so our team can follow up directly?"
+                )
             return error_fallback, intent, True
 
     def generate_chat_response_stream(
@@ -1022,6 +1138,7 @@ class GeminiService:
         usage_out: Optional[Dict[str, Any]] = None,
         agent_config: Optional[Dict[str, Any]] = None,
         flow_config: Optional[Dict[str, Any]] = None,
+        contact_info_captured: Optional[Dict[str, Any]] = None,
     ):
         """
         Stream response tokens from Gemini in real time.
@@ -1029,6 +1146,10 @@ class GeminiService:
         """
         if not self._client and os.getenv("GEMINI_API_KEY"):
             self._init_client()
+
+        has_captured_contact = bool(
+            contact_info_captured and (contact_info_captured.get("phone") or contact_info_captured.get("email"))
+        )
 
         full_prompt, org_label = self._build_full_prompt(
             user_message=user_message,
@@ -1041,6 +1162,7 @@ class GeminiService:
             custom_instructions=custom_instructions,
             agent_config=agent_config,
             flow_config=flow_config,
+            contact_info_captured=contact_info_captured,
         )
 
         if not self._client:
@@ -1055,6 +1177,7 @@ class GeminiService:
                 custom_instructions=custom_instructions,
                 agent_config=agent_config,
                 flow_config=flow_config,
+                contact_info_captured=contact_info_captured,
             )
             words = fallback_text.split(" ")
             for w in words:
@@ -1077,9 +1200,15 @@ class GeminiService:
                     yield chunk.text
         except Exception as e:
             logger.error(f"Error streaming from Gemini: {e}")
-            yield (
-                f"Thank you for reaching out to {org_label}. We encountered a temporary connection issue. "
-                "Would you like to leave your name and phone number so our team can follow up with you directly?"
-            )
+            if has_captured_contact:
+                yield (
+                    f"Thank you for reaching out to {org_label}. We encountered a temporary connection issue. "
+                    "Our team has your contact details and will follow up with you directly."
+                )
+            else:
+                yield (
+                    f"Thank you for reaching out to {org_label}. We encountered a temporary connection issue. "
+                    "Would you like to leave your name and phone number so our team can follow up with you directly?"
+                )
 
 gemini_service = GeminiService()

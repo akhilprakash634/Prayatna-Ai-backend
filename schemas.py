@@ -1,3 +1,4 @@
+import re
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime, timezone
@@ -91,6 +92,19 @@ class EnquiryCreate(BaseModel):
     category: str = Field("appointment", max_length=50)
     description: str = Field(..., min_length=2, max_length=2000)
     preferred_contact: str = Field("phone", max_length=50)
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        s = (v or "").strip()
+        digits = re.sub(r"\D", "", s)
+        if len(digits) < 10:
+            raise ValueError("Phone number must contain at least 10 digits.")
+        if len(digits) > 15:
+            raise ValueError("Phone number cannot exceed 15 digits.")
+        if len(set(digits)) <= 2:
+            raise ValueError("Please provide a valid phone number, not repeated single digits.")
+        return s
 
 class EnquiryUpdate(BaseModel):
     status: Optional[str] = Field(None, pattern="^(New|Contacted|Resolved|Closed)$")

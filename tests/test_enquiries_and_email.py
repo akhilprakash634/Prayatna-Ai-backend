@@ -234,4 +234,87 @@ class EnquiriesAndEmailTests(unittest.TestCase):
         self.assertIn("success", test_data)
         self.assertIn("message", test_data)
 
+    def test_strict_phone_validation_on_enquiry_create(self):
+        """Verify strict phone number checks (>=10 digits, <=15 digits, non-repeating)."""
+        client = TestClient(self.main.app)
+
+        # 1. Invalid: too short (<10 digits)
+        short_res = client.post(
+            "/api/enquiries",
+            json={
+                "chatbot_id": "prayatna-bot",
+                "parent_name": "Test User",
+                "email": "test@example.com",
+                "phone": "98765",
+                "interested_service": "Speech Therapy",
+                "description": "Short phone test",
+            },
+        )
+        self.assertEqual(short_res.status_code, 422)
+
+        # 2. Invalid: repeated single digits (e.g. 0000000000 or 1111111111)
+        repeated_res = client.post(
+            "/api/enquiries",
+            json={
+                "chatbot_id": "prayatna-bot",
+                "parent_name": "Test User",
+                "email": "test@example.com",
+                "phone": "0000000000",
+                "interested_service": "Speech Therapy",
+                "description": "Repeated phone test",
+            },
+        )
+        self.assertEqual(repeated_res.status_code, 422)
+
+        # 3. Valid 10-digit mobile
+        valid_res = client.post(
+            "/api/enquiries",
+            json={
+                "chatbot_id": "prayatna-bot",
+                "parent_name": "Anita Roy",
+                "email": "anita@example.com",
+                "phone": "+91 98450 12345",
+                "interested_service": "Developmental Assessment",
+                "description": "Valid phone test",
+            },
+        )
+        self.assertEqual(valid_res.status_code, 201)
+        self.assertEqual(valid_res.json()["phone"], "+91 98450 12345")
+
+    def test_phone_extractor_and_prompt_contact_memory(self):
+        """Verify extraction rejects dates/repeats, and prompts prevent re-asking for contact details."""
+        from services.gemini import is_valid_phone_candidate, extract_lead_info, gemini_service
+
+        # 1. Date should NOT be considered a phone candidate
+        self.assertFalse(is_valid_phone_candidate("2026-11-27"))
+        self.assertFalse(is_valid_phone_candidate("1111111111"))
+        self.assertFalse(is_valid_phone_candidate("12345"))
+        self.assertTrue(is_valid_phone_candidate("+91 9876543210"))
+        self.assertTrue(is_valid_phone_candidate("9876543210"))
+
+        # 2. Lead extraction from conversation text
+        lead = extract_lead_info("Hello, my name is Rahul and my phone number is +91 9876543210")
+        self.assertEqual(lead.get("phone"), "+91 9876543210")
+        self.assertEqual(lead.get("parent_name"), "Rahul")
+
+        # 3. Prompt building when contact info is captured vs not captured
+        prompt_with_contact, _ = gemini_service._build_full_prompt(
+            user_message="What are your operating hours?",
+            retrieved_chunks=[],
+            conversation_history=[],
+            organization_name="Right Logistics",
+            contact_info_captured={"parent_name": "Rahul", "phone": "+91 9876543210"},
+        )
+        self.assertIn("VISITOR CONTACT DETAILS ALREADY REGISTERED", prompt_with_contact)
+        self.assertIn("NEVER ask the visitor for their phone number", prompt_with_contact)
+
+        prompt_without_contact, _ = gemini_service._build_full_prompt(
+            user_message="What are your operating hours?",
+            retrieved_chunks=[],
+            conversation_history=[],
+            organization_name="Right Logistics",
+            contact_info_captured=None,
+        )
+        self.assertNotIn("VISITOR CONTACT DETAILS ALREADY REGISTERED", prompt_without_contact)
+
 

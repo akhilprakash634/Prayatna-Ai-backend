@@ -56,7 +56,18 @@ def create_enquiry(
     Create an enquiry from the public chat widget/page scoped strictly to the target chatbot's organization.
     """
     public_chat_rate_limiter.check(f"enq:{get_client_ip(request)}:{payload.chatbot_id or 'default'}")
-    org, _ = resolve_public_chatbot(db, payload.chatbot_id)
+    if payload.chatbot_id:
+        org, _ = resolve_public_chatbot(db, payload.chatbot_id)
+    elif payload.conversation_id:
+        conv = db.query(Conversation).filter(Conversation.id == payload.conversation_id).first()
+        if conv:
+            org = db.query(Organization).filter(Organization.id == conv.organization_id).first()
+            if not org:
+                org, _ = resolve_public_chatbot(db, None)
+        else:
+            org, _ = resolve_public_chatbot(db, None)
+    else:
+        org, _ = resolve_public_chatbot(db, None)
 
     if payload.conversation_id:
         conv = db.query(Conversation).filter(Conversation.id == payload.conversation_id).first()
