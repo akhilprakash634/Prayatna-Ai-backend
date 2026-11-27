@@ -363,10 +363,13 @@ class EnquiriesAndEmailTests(unittest.TestCase):
                 import time
                 time.sleep(0.1)  # Allow daemon thread to run
                 self.assertTrue(mock_send.called)
-                args, kwargs = mock_send.call_args
-                self.assertEqual(kwargs.get("to_email"), "prince@rightlogistics.in")
-                self.assertEqual(kwargs.get("from_name"), "Right Logistics")
-                self.assertEqual(kwargs.get("smtp_config")["from_email"], "sales@growyourbusiness.today")
+                called_recipients = [c.kwargs.get("to_email") for c in mock_send.call_args_list]
+                self.assertIn("prince@rightlogistics.in", called_recipients)
+                self.assertIn("sales@growyourbusiness.today", called_recipients)
+                # Verify sender and SMTP config on calls
+                for call in mock_send.call_args_list:
+                    self.assertEqual(call.kwargs.get("from_name"), "Right Logistics")
+                    self.assertEqual(call.kwargs.get("smtp_config")["from_email"], "sales@growyourbusiness.today")
         finally:
             db.close()
 

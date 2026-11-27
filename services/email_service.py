@@ -566,7 +566,16 @@ def dispatch_lead_alert(
 
         recipients = []
         if org_email_cfg.get("company_email"):
-            recipients.append(org_email_cfg["company_email"].strip().lower())
+            comp_e = org_email_cfg["company_email"].strip().lower()
+            if comp_e and "@" in comp_e:
+                recipients.append(comp_e)
+
+        # Include authenticated SMTP user (e.g. sales@growyourbusiness.today) so the sales mailbox
+        # also receives a direct copy of all captured website enquiries
+        smtp_u = (org_email_cfg.get("smtp_user") or "").strip().lower()
+        if smtp_u and "@" in smtp_u and smtp_u not in recipients:
+            recipients.append(smtp_u)
+
         if org_email_cfg.get("additional_emails"):
             for em in org_email_cfg["additional_emails"]:
                 if em and "@" in em and em.strip().lower() not in recipients:
@@ -576,8 +585,6 @@ def dispatch_lead_alert(
             recipients.append(theme_cfg["notification_email"].strip().lower())
         if not recipients and admin_user and admin_user.email:
             recipients.append(admin_user.email.strip().lower())
-        if not recipients and org_email_cfg.get("smtp_user") and "@" in org_email_cfg["smtp_user"]:
-            recipients.append(org_email_cfg["smtp_user"].strip().lower())
 
         is_enabled = org_email_cfg.get("enabled", True)
         if recipients and is_enabled:
