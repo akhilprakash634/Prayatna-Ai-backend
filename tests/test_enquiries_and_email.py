@@ -396,4 +396,62 @@ class EnquiriesAndEmailTests(unittest.TestCase):
         self.assertEqual(lead2.get("phone"), "9876543210")
         self.assertEqual(lead2.get("parent_name"), "Akhil")
 
+    def test_direct_callback_modal_conversation_link_and_no_reask(self):
+        """Verify that when a callback enquiry is submitted via the direct callback modal
+        (with conversation_id=None), a conversation is created and returned,
+        subsequent chat turns recognize the captured contact info, and prompts forbid re-asking for contact details."""
+        client = TestClient(self.main.app)
+        res = client.post(
+            "/api/enquiries",
+            json={
+                "parent_name": "Ai ASMR",
+                "phone": "7902819158",
+                "email": "aiasmrappu@gmail.com",
+                "interested_service": "Air Freight",
+                "category": "appointment",
+                "description": "Callback test",
+            },
+        )
+        self.assertEqual(res.status_code, 201)
+        created_enq = res.json()
+        self.assertIsNotNone(created_enq.get("conversation_id"))
+        conv_id = created_enq["conversation_id"]
+
+        # Check that conversation and enquiry are linked in DB
+        db = self.database.SessionLocal()
+        try:
+            from routes.chat import _get_captured_contact_info
+            from services.gemini import gemini_service
+
+            enq_obj = db.query(self.models.Enquiry).filter(self.models.Enquiry.id == created_enq["id"]).first()
+            self.assertIsNotNone(enq_obj)
+            self.assertEqual(enq_obj.conversation_id, conv_id)
+
+            captured = _get_captured_contact_info(
+                db=db,
+                organization_id=enq_obj.organization_id,
+                conversation_id=conv_id,
+                message_text="can i get a call back",
+                history_dicts=[],
+            )
+            # Should accurately identify captured contact info from the database
+            self.assertIsNotNone(captured)
+            self.assertEqual(captured["phone"], "7902819158")
+            self.assertEqual(captured["parent_name"], "Ai ASMR")
+
+            # Verify prompt builder instructs bot to confirm callback at 7902819158 and never ask again
+            prompt, _ = gemini_service._build_full_prompt(
+                user_message="can i get a call back",
+                retrieved_chunks=[],
+                conversation_history=[],
+                organization_name="Right Logistics",
+                contact_info_captured=captured,
+            )
+            self.assertIn("CRITICAL OVERRIDE", prompt)
+            self.assertIn("7902819158", prompt)
+            self.assertIn("NEVER ask the visitor for their phone number", prompt)
+        finally:
+            db.close()
+
+
 

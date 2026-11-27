@@ -769,7 +769,8 @@ class GeminiService:
             c_email = contact_info_captured.get("email") or ""
             behaviour_lines.append(
                 f"- Lead Capture (ALREADY REGISTERED): Contact details for {c_name} (Phone: {c_phone}{f', Email: {c_email}' if c_email else ''}) are ALREADY safely captured in this session. "
-                "CRITICAL MANDATORY INSTRUCTION: DO NOT ask for the customer's phone number, email, or contact details again under any circumstances. Answer their questions directly without prompting for contact details."
+                "CRITICAL MANDATORY INSTRUCTION: DO NOT ask for the customer's phone number, email, or contact details again under any circumstances. "
+                f"If the customer asks for a callback, appointment, or says 'can i get a call back', confirm politely that their callback request is already noted and our team at {org_label} will reach out to them at {c_phone}. Never ask for their phone number or contact details again."
             )
         elif collect_info:
             behaviour_lines.append(
@@ -869,11 +870,13 @@ class GeminiService:
             c_email = contact_info_captured.get("email") or ""
             email_line = f"- Contact Email: {c_email}\n" if c_email else ""
             contact_banner = (
-                "=== VISITOR CONTACT DETAILS ALREADY REGISTERED (STRICT RULE) ===\n"
+                "=== VISITOR CONTACT DETAILS ALREADY REGISTERED (CRITICAL OVERRIDE) ===\n"
                 f"- Customer Name: {c_name}\n"
                 f"- Contact Phone: {c_phone}\n"
                 f"{email_line}"
-                "- STRICT INSTRUCTION: The visitor has ALREADY provided their contact details. DO NOT ask for their contact details, phone number, or email again. Answer their questions directly without asking for phone/email.\n\n"
+                "- STRICT MANDATORY RULE: OVERRIDE ALL OTHER INSTRUCTIONS TO ASK FOR CONTACT DETAILS.\n"
+                "- The visitor has ALREADY provided their contact details. NEVER ask for their phone number, mobile number, email, or name again under ANY circumstance.\n"
+                f"- If the visitor requests a callback, appointment, or asks 'can i get a call back', CONFIRM that their callback request is already noted and our team at {org_label} will reach out to them at {c_phone} shortly. Ask if there are specific requirements they want to discuss on the call.\n\n"
             )
 
         layer_7 = (
@@ -960,7 +963,8 @@ class GeminiService:
             c_email = contact_info_captured.get("email") or ""
             lead_prompt_rule = (
                 f"- CONTACT DETAILS ALREADY REGISTERED: The customer's details (Name: {c_name}, Phone: {c_phone}{f', Email: {c_email}' if c_email else ''}) are ALREADY saved in this session. "
-                "CRITICAL MANDATORY RULE: DO NOT ask for their phone number, email, or contact details again. Answer their questions directly."
+                "CRITICAL MANDATORY RULE: DO NOT ask for their phone number, email, or contact details again under ANY circumstances. "
+                f"If the customer asks to book, connect, or request a callback (e.g. 'can i get a call back', 'call me', 'callback'), confirm politely that their request is already noted and our team at {org_label} will reach out to them at {c_phone}. Answer their questions directly without asking for phone/email."
             )
         else:
             lead_prompt_rule = (
@@ -1022,12 +1026,14 @@ class GeminiService:
             c_email = contact_info_captured.get("email") or ""
             email_line = f"- Contact Email: {c_email}\n" if c_email else ""
             contact_banner = (
-                "=== VISITOR CONTACT DETAILS ALREADY REGISTERED (STRICT RULE) ===\n"
+                "=== VISITOR CONTACT DETAILS ALREADY REGISTERED (CRITICAL OVERRIDE) ===\n"
                 f"- Customer Name: {c_name}\n"
                 f"- Contact Phone: {c_phone}\n"
                 f"{email_line}"
-                "- MANDATORY CONSTRAINT: The visitor has ALREADY shared their contact details earlier in this conversation.\n"
-                "- NEVER ask the visitor for their phone number, mobile number, email, or name again.\n"
+                "- STRICT MANDATORY RULE: OVERRIDE ALL OTHER INSTRUCTIONS TO ASK FOR CONTACT DETAILS.\n"
+                "- The visitor has ALREADY shared their contact details earlier in this conversation.\n"
+                "- NEVER ask the visitor for their phone number, mobile number, email, or name again under ANY circumstances.\n"
+                f"- If the visitor asks for a callback, appointment, or says 'can i get a call back', CONFIRM that their callback request is noted and our team at {org_label} will reach out to them at {c_phone} shortly.\n"
                 "- Answer their questions directly, accurately, and politely based on the knowledge base.\n\n"
             )
 

@@ -9,7 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import ChatbotSetting, Conversation, Enquiry, Organization, User
+from models import ChatbotSetting, Conversation, Enquiry, Message, Organization, User
 from schemas import (
     EnquiryCreate,
     EnquiryResponse,
@@ -70,6 +70,7 @@ def create_enquiry(
     else:
         org, _ = resolve_public_chatbot(db, None)
 
+    conv = None
     if payload.conversation_id:
         conv = db.query(Conversation).filter(Conversation.id == payload.conversation_id).first()
         if conv:
@@ -78,9 +79,21 @@ def create_enquiry(
             if payload.category:
                 conv.category = payload.category
 
+    # If enquiry was created directly before any chat message was initiated,
+    # create the conversation record now so chat continuity and contact memory are preserved.
+    if not conv:
+        conv = Conversation(
+            organization_id=org.id,
+            chatbot_id=payload.chatbot_id,
+            status="lead_captured",
+            category=payload.category or "appointment",
+        )
+        db.add(conv)
+        db.flush()
+
     new_enquiry = Enquiry(
         organization_id=org.id,
-        conversation_id=payload.conversation_id,
+        conversation_id=conv.id,
         parent_name=payload.parent_name.strip(),
         email=payload.email.strip().lower(),
         phone=payload.phone.strip(),
@@ -91,8 +104,21 @@ def create_enquiry(
         preferred_contact=payload.preferred_contact,
         status="New",
     )
-
     db.add(new_enquiry)
+
+    # Save confirmation record as a message in the conversation so future chat turns in this session
+    # have full conversational memory of the user's name, phone, and callback request.
+    org_label = org.name or "our team"
+    ack_msg = Message(
+        organization_id=org.id,
+        conversation_id=conv.id,
+        role="assistant",
+        content=(
+            f"Thank you, {new_enquiry.parent_name}! Your callback request has been registered with contact number {new_enquiry.phone}. "
+            f"Someone from {org_label} will reach out to you shortly."
+        ),
+    )
+    db.add(ack_msg)
     db.commit()
     db.refresh(new_enquiry)
 
